@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+  }
+}
+
+@layer components {
+  /* Glassmorphism card */
+  .glass {
+    @apply bg-white/10 backdrop-blur-md border border-white/20 shadow-xl;
+  }
+
+  .glass-dark {
+    @apply bg-gray-900/50 backdrop-blur-md border border-gray-700/50 shadow-2xl;
+  }
+
+  /* Gradient backgrounds */
+  .gradient-bg {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+
+  .gradient-bg-dark {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  }
+
+  /* Animated gradient */
+  .animated-gradient {
+    background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+    background-size: 400% 400%;
+    animation: gradient 15s ease infinite;
+  }
+
+  /* Glass button */
+  .btn-glass {
+    @apply px-4 py-2 rounded-lg bg-white/20 backdrop-blur-sm border border-white/30 
+           hover:bg-white/30 transition-all duration-200 shadow-lg hover:shadow-xl;
+  }
+
+  /* Glass input */
+  .input-glass {
+    @apply w-full px-4 py-2 rounded-lg bg-white/10 backdrop-blur-sm border border-white/20 
+           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-400 
+           focus:border-transparent transition-all duration-200;
+  }
+
+  /* Step indicator */
+  .step-indicator {
+    @apply relative flex items-center justify-center w-10 h-10 rounded-full 
+           bg-gradient-to-br from-primary-400 to-primary-600 text-white font-semibold shadow-lg;
+  }
+
+  .step-indicator::before {
+    content: "";
+    @apply absolute inset-0 rounded-full bg-primary-400 animate-ping opacity-30;
+  }
+
+  /* Tool badge */
+  .tool-badge {
+    @apply inline-flex items-center px-2 py-1 rounded-full text-xs font-medium
+           bg-gradient-to-r from-purple-400 to-pink-400 text-white shadow-md;
+  }
+
+  /* Message bubble */
+  .message-user {
+    @apply ml-auto bg-gradient-to-br from-primary-500 to-primary-600 text-white 
+           rounded-2xl rounded-br-sm px-4 py-2 max-w-[80%] shadow-lg;
+  }
+
+  .message-assistant {
+    @apply mr-auto bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm 
+           rounded-2xl rounded-bl-sm px-4 py-2 max-w-[80%] shadow-lg border border-gray-200 dark:border-gray-700;
+  }
+
+  /* Loading dots */
+  .loading-dots {
+    @apply inline-flex space-x-1;
+  }
+
+  .loading-dots span {
+    @apply w-2 h-2 bg-primary-500 rounded-full animate-bounce;
+  }
+
+  .loading-dots span:nth-child(2) {
+    animation-delay: 0.1s;
+  }
+
+  .loading-dots span:nth-child(3) {
+    animation-delay: 0.2s;
+  }
+
+  /* Scrollbar styling */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-400/50 rounded-full hover:bg-gray-500/50;
+  }
+
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-600/50 hover:bg-gray-500/50;
+  }
+
+  /* Permission dialog */
+  .permission-glow {
+    @apply relative;
+  }
+
+  .permission-glow::before {
+    content: "";
+    @apply absolute -inset-1 bg-gradient-to-r from-yellow-400 to-orange-400 
+           rounded-lg blur opacity-50 animate-pulse;
+  }
+}
+
+/* Custom animations */
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* Background pattern */
+body {
+  @apply bg-gray-50 dark:bg-gray-950;
+  background-image: radial-gradient(
+      at 20% 80%,
+      rgb(120, 100, 255) 0,
+      transparent 50%
+    ),
+    radial-gradient(at 80% 20%, rgb(255, 100, 150) 0, transparent 50%),
+    radial-gradient(at 40% 40%, rgb(100, 200, 255) 0, transparent 50%);
+  background-attachment: fixed;
+}
+
+.dark body {
+  background-image: radial-gradient(
+      at 20% 80%,
+      rgb(60, 50, 120) 0,
+      transparent 50%
+    ),
+    radial-gradient(at 80% 20%, rgb(120, 50, 75) 0, transparent 50%),
+    radial-gradient(at 40% 40%, rgb(50, 100, 120) 0, transparent 50%);
+}
