@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  # Qdrant vector database (optional - use if not using Chroma)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: local-agent-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+    profiles:
+      - qdrant
+
+  # SearxNG for private web search (optional)
+  searxng:
+    image: searxng/searxng:latest
+    container_name: local-agent-searxng
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888/
+    profiles:
+      - search
+
+  # Ollama service (if not running locally)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: local-agent-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    profiles:
+      - ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  qdrant_data:
+  ollama_data:
+  searxng:
