@@ -31,7 +31,7 @@ if %errorlevel% equ 0 (
     echo Qwen model found
 ) else (
     echo Pulling Qwen model...
-    ollama pull qwen2.5:3b
+    ollama pull qwen3:latest
 )
 
 :: Install backend dependencies

@@ -27,7 +27,7 @@ if ollama list | grep -q "qwen"; then
     echo "✅ Qwen model found"
 else
     echo "📦 Pulling Qwen model..."
-    ollama pull qwen2.5:3b
+    ollama pull qwen3:latest
 fi
 
 # Install backend dependencies

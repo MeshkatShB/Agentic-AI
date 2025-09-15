@@ -28,7 +28,7 @@ A privacy-preserving, local-first AI agent that can search, reason, plan, and ex
 # Download from: https://ollama.com/download
 
 # Pull Qwen3 model
-ollama pull qwen2.5:3b
+ollama pull qwen3:latest
 
 # Verify Ollama is running
 curl http://127.0.0.1:11434/api/tags
@@ -92,7 +92,7 @@ Create a `.env` file in the root directory:
 SECRET_KEY=your-secret-key-here-change-in-production
 DATABASE_URL=sqlite:///./local_agent.db
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-DEFAULT_MODEL=qwen2.5:3b
+DEFAULT_MODEL=qwen3:latest
 
 # Vector Storage
 VECTOR_STORE=chroma  # or "qdrant"
