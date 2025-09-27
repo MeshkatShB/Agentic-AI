@@ -1,12 +1,10 @@
 """Application configuration and settings."""
 
-from pydantic_settings import BaseSettings
 from typing import List, Optional
-import os
 from pathlib import Path
 
 
-class Settings(BaseSettings):
+class Settings:
     # App
     APP_NAME: str = "Local AI Agent"
     APP_VERSION: str = "1.0.0"
@@ -22,7 +20,7 @@ class Settings(BaseSettings):
     
     # Ollama
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
-    DEFAULT_MODEL: str = "qwen2.5:3b"
+    DEFAULT_MODEL: str = "qwen3:latest"
     MODEL_TEMPERATURE: float = 0.7
     MODEL_MAX_TOKENS: int = 2000
     
@@ -31,7 +29,11 @@ class Settings(BaseSettings):
     CHROMA_PATH: str = "./chroma_db"
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION: str = "agent_memory"
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"  # Better for Persian
+    EMBEDDING_DIMENSION: int = 384  # Dimension for the multilingual model
+    CHUNK_SIZE: int = 1000  # Characters per chunk
+    CHUNK_OVERLAP: int = 200  # Overlap between chunks
+    MAX_RETRIEVAL_RESULTS: int = 10  # Maximum results to retrieve
     
     # File Access
     ALLOWED_FILE_PATHS: List[str] = ["./data", "./documents"]
@@ -45,12 +47,12 @@ class Settings(BaseSettings):
     REQUIRE_TOOL_CONFIRMATION: bool = True
     
     # Web Search (Optional)
-    ENABLE_WEB_SEARCH: bool = False
-    SEARXNG_URL: Optional[str] = None
+    ENABLE_WEB_SEARCH: bool = True
+    SEARXNG_URL: Optional[str] = "http://localhost:8888/"
     WEB_SEARCH_TIMEOUT: int = 10
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
     
     class Config:
         env_file = ".env"
