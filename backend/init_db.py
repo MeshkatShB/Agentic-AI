@@ -1,23 +1,25 @@
 """Initialize the database with tables and default data."""
 
-from sqlalchemy import create_engine
-from backend.models import Base, User
-from backend.config import settings
-from backend.auth import get_password_hash
-from sqlalchemy.orm import sessionmaker
 import sys
+import os
+from pathlib import Path
+
+# Add the parent directory to Python path so we can import backend modules
+parent_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(parent_dir))
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from backend.models.database import Base, engine
+from backend.models.user import User
+from backend.models.conversation import AgentStep  # Import to ensure table creation
+from backend.auth.auth import get_password_hash
 
 
 def init_database():
     """Initialize database with tables and default admin user."""
     
-    print(f"Initializing database: {settings.DATABASE_URL}")
-    
-    # Create engine
-    engine = create_engine(
-        settings.DATABASE_URL,
-        connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
-    )
+    print("Initializing database...")
     
     # Create all tables
     Base.metadata.create_all(bind=engine)
@@ -42,7 +44,7 @@ def init_database():
                 is_active=True,
                 preferences={
                     "theme": "dark",
-                    "model": "qwen2.5:3b",
+                    "model": "qwen3:latest",
                     "temperature": 0.7,
                     "max_steps": 10,
                     "max_tokens": 2000,
@@ -78,7 +80,7 @@ def init_database():
                 is_active=True,
                 preferences={
                     "theme": "light",
-                    "model": "qwen2.5:3b",
+                    "model": "qwen3:latest",
                     "temperature": 0.7,
                     "max_steps": 5,
                     "max_tokens": 1000,

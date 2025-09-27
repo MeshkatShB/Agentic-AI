@@ -3,10 +3,12 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
 import asyncio
+import time
 
 from backend.config import settings
 from backend.models import Base, engine, get_db, User, Conversation, Message
@@ -41,9 +43,96 @@ app.include_router(tools_router, prefix="/api/tools", tags=["Tools"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring."""
+    from datetime import datetime
+    import psutil
+    import os
+    
+    # Basic health info
+    health_data = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": settings.APP_VERSION,
+        "uptime": time.time() - start_time if 'start_time' in globals() else 0
+    }
+    
+    # System metrics (if psutil is available)
+    try:
+        process = psutil.Process()
+        health_data["system"] = {
+            "cpu_percent": process.cpu_percent(),
+            "memory_mb": process.memory_info().rss / 1024 / 1024,
+            "open_files": len(process.open_files()),
+            "threads": process.num_threads()
+        }
+    except ImportError:
+        health_data["system"] = {"status": "psutil not available"}
+    
+    # Database health
+    try:
+        db = next(get_db())
+        db.execute(text("SELECT 1"))
+        health_data["database"] = {"status": "connected"}
+        db.close()
+    except Exception as e:
+        health_data["database"] = {"status": "error", "error": str(e)}
+    
+    return health_data
+
+
+@app.get("/metrics")
+async def get_metrics(db: Session = Depends(get_db)):
+    """Get application metrics."""
+    from sqlalchemy import text
+    
+    metrics = {}
+    
+    try:
+        # User metrics
+        result = db.execute(text("SELECT COUNT(*) as count FROM users")).fetchone()
+        metrics["users_total"] = result.count
+        
+        # Conversation metrics
+        result = db.execute(text("SELECT COUNT(*) as count FROM conversations")).fetchone()
+        metrics["conversations_total"] = result.count
+        
+        # Message metrics
+        result = db.execute(text("SELECT COUNT(*) as count FROM messages")).fetchone()
+        metrics["messages_total"] = result.count
+        
+        # Recent activity (last 24 hours)
+        result = db.execute(text("""
+            SELECT COUNT(*) as count FROM messages 
+            WHERE created_at > datetime('now', '-1 day')
+        """)).fetchone()
+        metrics["messages_24h"] = result.count
+        
+        # Tool usage from agent_steps
+        try:
+            result = db.execute(text("""
+                SELECT tool_name, COUNT(*) as count 
+                FROM agent_steps 
+                WHERE tool_name IS NOT NULL 
+                GROUP BY tool_name
+            """)).fetchall()
+            metrics["tool_usage"] = {row.tool_name: row.count for row in result}
+        except:
+            metrics["tool_usage"] = {"error": "agent_steps table not available"}
+        
+    except Exception as e:
+        metrics["error"] = str(e)
+    
+    return metrics
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
+    global start_time
+    start_time = time.time()
+    
     # Initialize vector store
     vector_store = get_vector_store()
     await vector_store.initialize()
