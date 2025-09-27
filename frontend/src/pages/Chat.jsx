@@ -16,6 +16,7 @@ import {
   Check,
   X,
   Wrench,
+  Square,
 } from "lucide-react";
 import { useChatStore } from "../stores/chatStore";
 import ConversationList from "../components/ConversationList";
@@ -38,6 +39,7 @@ const Chat = () => {
     createConversation,
     sendMessage,
     updateConversation,
+    stopStreaming,
   } = useChatStore();
 
   const [input, setInput] = useState("");
@@ -104,6 +106,11 @@ const Chat = () => {
 
     // Send message with selected tools
     await sendMessage(targetConversation.id, message, selectedTools);
+  };
+
+  const handleStop = () => {
+    stopStreaming();
+    toast.success("Stopped generation");
   };
 
   const handleKeyPress = (e) => {
@@ -291,13 +298,23 @@ const Chat = () => {
                     }}
                   />
                 </div>
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || isStreaming}
-                  className="p-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-                >
-                  <Send className="w-5 h-5" />
-                </button>
+                {isStreaming ? (
+                  <button
+                    onClick={handleStop}
+                    className="p-3 rounded-xl bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 transition-all duration-200"
+                    title="Stop generation"
+                  >
+                    <Square className="w-5 h-5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim()}
+                    className="p-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                )}
               </div>
 
               {/* Status indicators */}

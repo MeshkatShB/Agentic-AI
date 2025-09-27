@@ -17,6 +17,7 @@ class AgentExecutor:
         """Initialize the executor."""
         self.active_agents: Dict[int, Agent] = {}  # user_id -> Agent
         self.execution_locks: Dict[int, asyncio.Lock] = {}  # user_id -> Lock
+        self.cancellation_tokens: Dict[int, asyncio.Event] = {}  # user_id -> CancellationEvent
     
     def get_agent_for_user(
         self,
@@ -51,6 +52,10 @@ class AgentExecutor:
         selected_tools: Optional[list] = None
     ) -> AsyncGenerator[Dict, None]:
         """Execute agent for user message."""
+        
+        # Create cancellation token for this execution
+        cancellation_token = asyncio.Event()
+        self.cancellation_tokens[user.id] = cancellation_token
         
         # Get agent and lock
         agent = self.get_agent_for_user(user, conversation_id)
@@ -87,6 +92,15 @@ class AgentExecutor:
                     allowed_tools=tools_to_use,
                     stream=stream
                 ):
+                    # Check for cancellation before processing each event
+                    if cancellation_token.is_set():
+                        logger.info(f"Execution cancelled for user {user.id}")
+                        yield {
+                            "type": "cancelled",
+                            "message": "Generation stopped by user"
+                        }
+                        return
+                    
                     # Handle different event types
                     if event.get("type") == "token":
                         # Stream token to client
@@ -193,6 +207,10 @@ class AgentExecutor:
                     "type": "error",
                     "error": str(e)
                 }
+            finally:
+                # Clean up cancellation token
+                if user.id in self.cancellation_tokens:
+                    del self.cancellation_tokens[user.id]
     
     def clear_agent(self, user_id: int):
         """Clear agent for user."""
@@ -200,11 +218,19 @@ class AgentExecutor:
             del self.active_agents[user_id]
         if user_id in self.execution_locks:
             del self.execution_locks[user_id]
+        if user_id in self.cancellation_tokens:
+            # Set the cancellation token to stop current execution
+            self.cancellation_tokens[user_id].set()
+            del self.cancellation_tokens[user_id]
     
     def clear_all_agents(self):
         """Clear all active agents."""
+        # Set all cancellation tokens before clearing
+        for token in self.cancellation_tokens.values():
+            token.set()
         self.active_agents.clear()
         self.execution_locks.clear()
+        self.cancellation_tokens.clear()
 
 
 # Global executor instance

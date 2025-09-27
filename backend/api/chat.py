@@ -274,6 +274,32 @@ async def send_message(
         return events[-1] if events else {"error": "No response generated"}
 
 
+@router.post("/conversations/{conversation_id}/stop")
+async def stop_generation(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Stop the current generation for a conversation."""
+    
+    # Verify conversation ownership
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+    
+    # Stop the agent execution for this user
+    agent_executor.clear_agent(current_user.id)
+    
+    return {"message": "Generation stopped successfully"}
+
+
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: int,

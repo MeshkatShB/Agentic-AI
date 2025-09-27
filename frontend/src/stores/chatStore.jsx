@@ -11,6 +11,7 @@ export const useChatStore = create((set, get) => ({
   isStreaming: false,
   streamingMessage: "",
   currentSteps: [],
+  abortController: null, // For stopping streaming requests
 
   loadConversations: async () => {
     set({ isLoading: true });
@@ -94,6 +95,10 @@ export const useChatStore = create((set, get) => ({
   sendMessage: async (conversationId, content, selectedTools = []) => {
     if (!content.trim()) return;
 
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    set({ abortController });
+
     // Add user message immediately
     const userMessage = {
       id: Date.now(),
@@ -133,6 +138,7 @@ export const useChatStore = create((set, get) => ({
             stream: true,
             selected_tools: selectedTools,
           }),
+          signal: abortController.signal,
         }
       );
 
@@ -210,6 +216,22 @@ export const useChatStore = create((set, get) => ({
                     messages,
                     isStreaming: false,
                     streamingMessage: "",
+                    abortController: null,
+                  };
+                });
+              } else if (data.type === "cancelled") {
+                // Handle cancellation
+                set((state) => {
+                  const messages = [...state.messages];
+                  const lastMessage = messages[messages.length - 1];
+                  if (lastMessage && lastMessage.role === "assistant") {
+                    lastMessage.content += "\n\n[Generation stopped by user]";
+                  }
+                  return {
+                    messages,
+                    isStreaming: false,
+                    streamingMessage: "",
+                    abortController: null,
                   };
                 });
               }
@@ -220,15 +242,46 @@ export const useChatStore = create((set, get) => ({
         }
       }
     } catch (error) {
-      set((state) => {
-        const messages = state.messages.slice(0, -1); // Remove placeholder on error
-        return {
-          messages,
-          isStreaming: false,
-          streamingMessage: "",
-        };
+      // Don't show error if it was aborted (user stopped)
+      if (error.name !== "AbortError") {
+        set((state) => {
+          const messages = state.messages.slice(0, -1); // Remove placeholder on error
+          return {
+            messages,
+            isStreaming: false,
+            streamingMessage: "",
+            abortController: null,
+          };
+        });
+        toast.error("Failed to send message");
+      } else {
+        // User stopped the request
+        set((state) => {
+          const messages = [...state.messages];
+          const lastMessage = messages[messages.length - 1];
+          if (lastMessage && lastMessage.role === "assistant") {
+            lastMessage.content += "\n\n[Generation stopped by user]";
+          }
+          return {
+            messages,
+            isStreaming: false,
+            streamingMessage: "",
+            abortController: null,
+          };
+        });
+      }
+    }
+  },
+
+  stopStreaming: () => {
+    const { abortController } = get();
+    if (abortController) {
+      abortController.abort();
+      set({
+        isStreaming: false,
+        streamingMessage: "",
+        abortController: null,
       });
-      toast.error("Failed to send message");
     }
   },
 
