@@ -43,16 +43,42 @@ class ToolRegistry:
             ReadFileTool,
             ParseDocumentTool,
             WebSearchTool,
-            CalculatorTool,
+            WebScrapeTool,
             DatabaseQueryTool
+        )
+        from .implementations.langchain_rag import RAGTool, DocumentSummarizerTool
+        from .implementations.advanced_tools import (
+            SystemInfoTool,
+            CodeAnalyzerTool,
+            ImageAnalyzerTool,
+            NetworkToolkit,
+            HashCalculatorTool
         )
         
         default_tools = [
+            # File and document tools
             SearchLocalFilesTool,
             ReadFileTool,
             ParseDocumentTool,
+            DocumentSummarizerTool,
+            
+            # RAG and AI tools
+            RAGTool,
+            
+            # Web tools
             WebSearchTool,
-            CalculatorTool,
+            WebScrapeTool,
+            
+            # System and analysis tools
+            SystemInfoTool,
+            CodeAnalyzerTool,
+            ImageAnalyzerTool,
+            HashCalculatorTool,
+            
+            # Network tools
+            NetworkToolkit,
+            
+            # Database tools
             DatabaseQueryTool
         ]
         

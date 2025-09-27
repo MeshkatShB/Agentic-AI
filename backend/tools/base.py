@@ -12,9 +12,11 @@ class ToolPermission(str, Enum):
     READ_FILES = "read_files"  # Can read local files
     WRITE_FILES = "write_files"  # Can write local files
     NETWORK = "network"  # Can access network
+    WEB_ACCESS = "web_access"  # Can access web/internet
     DATABASE_READ = "database_read"  # Can read from database
     DATABASE_WRITE = "database_write"  # Can write to database
     SYSTEM = "system"  # Can execute system commands
+    SYSTEM_READ = "system_read"  # Can read system information
 
 
 class ToolResult(BaseModel):
