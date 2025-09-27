@@ -163,6 +163,13 @@ class Agent:
             
             # Step 2: Execute the selected tool
             selected_tool, suggested_args = tool_selection
+            
+            # Ensure query parameter is present for search tools
+            if selected_tool in ["search_local_files", "rag_search"] and "query" not in suggested_args:
+                # Extract search terms from the original query as fallback
+                suggested_args["query"] = query.strip()
+                logger.info(f"Added fallback query parameter: {suggested_args['query']}")
+            
             async for result in self._execute_selected_tool(selected_tool, suggested_args, stream):
                 yield result
             
