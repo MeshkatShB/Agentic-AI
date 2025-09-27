@@ -61,10 +61,60 @@ Parameters:
         
         tool_calls = []
         
-        # Look for tool call patterns in various formats
-        # Format 1: TOOL_CALL: tool_name(args)
-        pattern1 = r'TOOL_CALL:\s*(\w+)\((.*?)\)'
+        # Format 1: Simple format - TOOL_CALL: tool_name followed by JSON on same or next line
+        pattern1 = r'TOOL_CALL:\s*(\w+)\s*\n?\s*(\{[^{}]*\}|\{[\s\S]*?\})'
         matches = re.findall(pattern1, response, re.DOTALL)
+        for tool_name, args_str in matches:
+            try:
+                args = json.loads(args_str.strip()) if args_str.strip() else {}
+                tool_calls.append({
+                    "name": tool_name,
+                    "arguments": args
+                })
+            except Exception as e:
+                # More flexible parsing - try to extract any JSON-like structure
+                args = {}
+                # Remove extra whitespace and newlines
+                clean_args = args_str.strip().replace('\n', ' ')
+                # Try to find key-value pairs in various formats
+                if clean_args:
+                    try:
+                        # Try again with cleaned string
+                        args = json.loads(clean_args)
+                    except:
+                        # Manual parsing as fallback
+                        for match in re.findall(r'"([^"]+)":\s*"([^"]+)"', clean_args):
+                            key, value = match
+                            args[key] = value
+                        # Also try without quotes
+                        for match in re.findall(r'(\w+):\s*"([^"]+)"', clean_args):
+                            key, value = match
+                            args[key] = value
+                
+                tool_calls.append({
+                    "name": tool_name,
+                    "arguments": args
+                })
+        
+        # Format 1b: Even simpler - TOOL_CALL: tool_name on one line, JSON on next line
+        pattern1b = r'TOOL_CALL:\s*(\w+)\s*\n\s*(\{[^}]*\})'
+        matches = re.findall(pattern1b, response, re.MULTILINE)
+        for tool_name, args_str in matches:
+            try:
+                args = json.loads(args_str.strip()) if args_str.strip() else {}
+                tool_calls.append({
+                    "name": tool_name,
+                    "arguments": args
+                })
+            except Exception as e:
+                tool_calls.append({
+                    "name": tool_name,
+                    "arguments": {"query": args_str.strip()}
+                })
+        
+        # Format 2: Legacy format - TOOL_CALL: tool_name(args)
+        pattern2 = r'TOOL_CALL:\s*(\w+)\((.*?)\)'
+        matches = re.findall(pattern2, response, re.DOTALL)
         for tool_name, args_str in matches:
             try:
                 # Try to parse as JSON
@@ -83,7 +133,7 @@ Parameters:
                 "arguments": args
             })
         
-        # Format 2: JSON format
+        # Format 3: JSON format
         json_pattern = r'\{[^{}]*"tool"[^{}]*\}'
         json_matches = re.findall(json_pattern, response)
         for match in json_matches:
@@ -97,7 +147,7 @@ Parameters:
             except:
                 pass
         
-        # Format 3: Function call format
+        # Format 4: Function call format
         func_pattern = r'<function>(\w+)</function>\s*<arguments>(.*?)</arguments>'
         func_matches = re.findall(func_pattern, response, re.DOTALL)
         for tool_name, args_str in func_matches:
@@ -122,29 +172,10 @@ Parameters:
             tool_desc = self.format_tools(tools)
             prompt = f"""{base_prompt}
 
-You have access to the following tools:
-
+AVAILABLE TOOLS:
 {tool_desc}
 
-When you need to use a tool, respond with:
-PLAN: <brief description of what you're going to do>
-REQUEST_PERMISSION: <explain why this tool is needed and what it will do>
-TOOL_CALL: tool_name(arguments in JSON format)
-
-Example:
-PLAN: Search for information about Python decorators
-REQUEST_PERMISSION: I need to search local files to find documentation about Python decorators
-TOOL_CALL: search_local_files({{"query": "Python decorators", "top_k": 5}})
-
-After receiving tool results, continue with:
-OBSERVATION: <summary of the tool output>
-NEXT: <your next action or final answer>
-
-Important:
-- Always request permission before using tools that access files, network, or databases
-- Use one tool at a time
-- Provide clear reasoning for each tool use
-- If a tool fails, explain the error and suggest alternatives"""
+Remember: Use the exact format shown in the instructions above!"""
         
         return prompt
 
@@ -174,7 +205,7 @@ class ModelAdapterFactory:
     _adapters = {
         "qwen": QwenAdapter,
         "qwen2": QwenAdapter,
-        "qwen2.5": QwenAdapter,
+        "qwen3:latest": QwenAdapter,
         "llama3": Llama3Adapter,
         "llama": Llama3Adapter
     }
