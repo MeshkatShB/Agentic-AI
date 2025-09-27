@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import json
 import asyncio
 
-from backend.models import get_db, User, Conversation, Message
+from backend.models import get_db, User, Conversation, Message, AgentStep
 from backend.auth import get_current_user
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
@@ -37,6 +37,7 @@ class MessageRequest(BaseModel):
     """Message request."""
     content: str
     stream: bool = True
+    selected_tools: Optional[List[str]] = []
 
 
 class MessageResponse(BaseModel):
@@ -136,6 +137,89 @@ async def get_conversation(
     }
 
 
+@router.get("/conversations/{conversation_id}/steps")
+async def get_conversation_steps(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get detailed agent steps for a conversation."""
+    
+    # Verify conversation ownership
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+    
+    # Get agent steps
+    agent_steps = db.query(AgentStep).filter(
+        AgentStep.conversation_id == conversation_id
+    ).order_by(AgentStep.step_number, AgentStep.created_at).all()
+    
+    return {
+        "conversation_id": conversation_id,
+        "steps": [step.to_dict() for step in agent_steps]
+    }
+
+
+@router.put("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def update_conversation(
+    conversation_id: int,
+    updates: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update conversation details."""
+    
+    # Get conversation
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+    
+    # Update allowed fields
+    if "title" in updates:
+        conversation.title = updates["title"]
+    if "model" in updates:
+        conversation.model = updates["model"]
+    if "temperature" in updates:
+        conversation.temperature = updates["temperature"]
+    if "max_steps" in updates:
+        conversation.max_steps = updates["max_steps"]
+    
+    # Update timestamp
+    from datetime import datetime
+    conversation.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(conversation)
+    
+    # Get message count
+    message_count = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).count()
+    
+    return ConversationResponse(
+        id=conversation.id,
+        title=conversation.title,
+        total_messages=message_count,
+        created_at=conversation.created_at.isoformat(),
+        updated_at=conversation.updated_at.isoformat() if conversation.updated_at else None
+    )
+
+
 @router.post("/conversations/{conversation_id}/messages")
 async def send_message(
     conversation_id: int,
@@ -165,7 +249,8 @@ async def send_message(
                 conversation_id=conversation_id,
                 message=request.content,
                 db=db,
-                stream=request.stream
+                stream=request.stream,
+                selected_tools=request.selected_tools
             ):
                 # Format as SSE
                 if request.stream:

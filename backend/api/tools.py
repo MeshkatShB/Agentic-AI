@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 from backend.models import get_db, User
@@ -35,6 +35,12 @@ class ToolExecuteResponse(BaseModel):
     metadata: dict = {}
 
 
+class ToolPermissionRequest(BaseModel):
+    """Tool permission request."""
+    tool_name: str
+    grant: bool
+
+
 @router.get("/", response_model=List[ToolInfo])
 async def list_tools(
     current_user: User = Depends(get_current_user)
@@ -47,6 +53,29 @@ async def list_tools(
     # Get tool schemas
     tools = []
     for tool_name in allowed_tools:
+        tool = tool_registry.get_tool(tool_name)
+        if tool:
+            tools.append(ToolInfo(
+                name=tool.name,
+                description=tool.description,
+                permission=tool.permission.value,
+                parameters=tool.parameters
+            ))
+    
+    return tools
+
+
+@router.get("/available", response_model=List[ToolInfo])
+async def list_available_tools(
+    current_user: User = Depends(get_current_user)
+):
+    """List all available tools in the system."""
+    
+    # Get all registered tools
+    all_tools = tool_registry.list_tools()
+    
+    tools = []
+    for tool_name in all_tools:
         tool = tool_registry.get_tool(tool_name)
         if tool:
             tools.append(ToolInfo(
@@ -157,9 +186,11 @@ def get_permission_description(permission: ToolPermission) -> str:
         ToolPermission.READ_FILES: "Can read local files",
         ToolPermission.WRITE_FILES: "Can write local files",
         ToolPermission.NETWORK: "Can access the network",
+        ToolPermission.WEB_ACCESS: "Can access web/internet",
         ToolPermission.DATABASE_READ: "Can read from databases",
         ToolPermission.DATABASE_WRITE: "Can write to databases",
-        ToolPermission.SYSTEM: "Can execute system commands"
+        ToolPermission.SYSTEM: "Can execute system commands",
+        ToolPermission.SYSTEM_READ: "Can read system information"
     }
     
     return descriptions.get(permission, "Unknown permission")
@@ -167,30 +198,39 @@ def get_permission_description(permission: ToolPermission) -> str:
 
 @router.post("/grant-permission")
 async def grant_permission(
-    tool_name: str,
-    grant: bool,
+    request: ToolPermissionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Grant or revoke permission for a tool."""
     
+    # Verify the tool exists in the registry
+    tool = tool_registry.get_tool(request.tool_name)
+    if not tool:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tool '{request.tool_name}' not found"
+        )
+    
     # Get current allowed tools
     allowed_tools = current_user.allowed_tools or []
     
-    if grant and tool_name not in allowed_tools:
+    if request.grant and request.tool_name not in allowed_tools:
         # Add tool
-        allowed_tools.append(tool_name)
+        allowed_tools.append(request.tool_name)
         current_user.allowed_tools = allowed_tools
         db.commit()
+        db.refresh(current_user)
         
-        return {"message": f"Granted access to {tool_name}"}
+        return {"message": f"Granted access to {request.tool_name}", "success": True}
     
-    elif not grant and tool_name in allowed_tools:
+    elif not request.grant and request.tool_name in allowed_tools:
         # Remove tool
-        allowed_tools.remove(tool_name)
+        allowed_tools.remove(request.tool_name)
         current_user.allowed_tools = allowed_tools
         db.commit()
+        db.refresh(current_user)
         
-        return {"message": f"Revoked access to {tool_name}"}
+        return {"message": f"Revoked access to {request.tool_name}", "success": True}
     
-    return {"message": "No change needed"}
+    return {"message": "No change needed", "success": True}

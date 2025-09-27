@@ -16,7 +16,7 @@ router = APIRouter()
 class UserSettings(BaseModel):
     """User settings."""
     theme: str = "dark"
-    model: str = "qwen2.5:3b"
+    model: str = "qwen3:latest"
     temperature: float = 0.7
     max_steps: int = 10
     max_tokens: int = 2000
@@ -48,7 +48,7 @@ async def get_user_settings(
     
     return UserSettings(
         theme=prefs.get("theme", "dark"),
-        model=prefs.get("model", "qwen2.5:3b"),
+        model=prefs.get("model", "qwen3:latest"),
         temperature=prefs.get("temperature", 0.7),
         max_steps=prefs.get("max_steps", 10),
         max_tokens=prefs.get("max_tokens", 2000),
