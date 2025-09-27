@@ -2,7 +2,7 @@
 
 from .database import Base, engine, SessionLocal, get_db
 from .user import User
-from .conversation import Conversation, Message
+from .conversation import Conversation, Message, AgentStep
 
 __all__ = [
     "Base",
@@ -11,5 +11,6 @@ __all__ = [
     "get_db",
     "User",
     "Conversation",
-    "Message"
+    "Message",
+    "AgentStep"
 ]

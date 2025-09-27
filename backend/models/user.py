@@ -21,7 +21,7 @@ class User(Base):
     # Preferences (stored as JSON)
     preferences = Column(JSON, default=lambda: {
         "theme": "dark",
-        "model": "qwen2.5:3b",
+        "model": "qwen3:latest",
         "temperature": 0.7,
         "max_steps": 10,
         "max_tokens": 2000,
