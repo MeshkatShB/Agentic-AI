@@ -22,17 +22,46 @@ const Tools = () => {
   const [tools, setTools] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [userAllowedTools, setUserAllowedTools] = useState(
+    user?.allowed_tools || []
+  );
+  const [togglingTool, setTogglingTool] = useState(null);
+  const [skipNextSync, setSkipNextSync] = useState(false);
+
+  console.log("Tools component render:", {
+    user: user?.username,
+    userAllowedTools,
+    authStoreAllowedTools: user?.allowed_tools,
+  });
 
   useEffect(() => {
     loadTools();
     loadPermissions();
   }, []);
 
+  // Sync local userAllowedTools with auth store user data
+  useEffect(() => {
+    console.log(
+      "Syncing userAllowedTools with user data:",
+      user?.allowed_tools,
+      "skipNextSync:",
+      skipNextSync
+    );
+
+    if (skipNextSync) {
+      setSkipNextSync(false);
+      return;
+    }
+
+    setUserAllowedTools(user?.allowed_tools || []);
+  }, [user?.allowed_tools, skipNextSync]);
+
   const loadTools = async () => {
     try {
-      const response = await axios.get("/tools/");
+      const response = await axios.get("/tools/available");
       setTools(response.data);
     } catch (error) {
+      console.error("Failed to load tools:", error);
       toast.error("Failed to load tools");
     } finally {
       setIsLoading(false);
@@ -49,19 +78,66 @@ const Tools = () => {
   };
 
   const toggleTool = async (toolName, currentlyEnabled) => {
+    console.log("toggleTool called:", {
+      toolName,
+      currentlyEnabled,
+      userAllowedTools,
+    });
+    setTogglingTool(toolName);
+
     try {
-      await axios.post("/tools/grant-permission", {
+      const response = await axios.post("/tools/grant-permission", {
         tool_name: toolName,
         grant: !currentlyEnabled,
       });
 
-      // Reload tools
-      await loadTools();
+      console.log("API response:", response.data);
+
+      // Update local state immediately for responsive UI
+      const newAllowedTools = currentlyEnabled
+        ? userAllowedTools.filter((tool) => tool !== toolName)
+        : [...userAllowedTools, toolName];
+
+      console.log(
+        "Updating userAllowedTools from:",
+        userAllowedTools,
+        "to:",
+        newAllowedTools
+      );
+      setUserAllowedTools(newAllowedTools);
+
+      // Skip the next sync to prevent overriding our local update
+      setSkipNextSync(true);
+
+      // Update auth store to persist the change
+      await refreshUserData();
+
       toast.success(
         currentlyEnabled ? `Disabled ${toolName}` : `Enabled ${toolName}`
       );
     } catch (error) {
+      console.error("Tool permission update error:", error);
+      // Revert local state on error
+      setUserAllowedTools(user?.allowed_tools || []);
       toast.error("Failed to update tool permission");
+    } finally {
+      setTogglingTool(null);
+    }
+  };
+
+  const refreshUserData = async () => {
+    try {
+      // Fetch updated user data to get the latest allowed_tools
+      const response = await axios.get("/auth/me");
+      const updatedUser = response.data;
+
+      console.log("Refreshed user data:", updatedUser);
+      console.log("Updated allowed_tools:", updatedUser.allowed_tools);
+
+      // Update the user in auth store
+      useAuthStore.setState({ user: updatedUser });
+    } catch (error) {
+      console.error("Failed to refresh user data:", error);
     }
   };
 
@@ -101,8 +177,6 @@ const Tools = () => {
         return "text-gray-400 bg-gray-500/20 border-gray-500/30";
     }
   };
-
-  const userAllowedTools = user?.allowed_tools || [];
 
   return (
     <div className="h-full overflow-y-auto custom-scrollbar">
@@ -169,6 +243,10 @@ const Tools = () => {
             <div className="space-y-4">
               {tools.map((tool) => {
                 const isEnabled = userAllowedTools.includes(tool.name);
+                console.log(
+                  `Tool ${tool.name}: isEnabled=${isEnabled}, userAllowedTools:`,
+                  userAllowedTools
+                );
 
                 return (
                   <motion.div
@@ -243,14 +321,22 @@ const Tools = () => {
                       {/* Enable/Disable toggle */}
                       <button
                         onClick={() => toggleTool(tool.name, isEnabled)}
+                        disabled={togglingTool === tool.name}
                         className={`px-4 py-2 rounded-lg transition-all duration-200 ${
-                          isEnabled
+                          togglingTool === tool.name
+                            ? "bg-gray-700/50 text-gray-500 border border-gray-600/50 cursor-not-allowed"
+                            : isEnabled
                             ? "bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30"
                             : "bg-gray-700/50 text-gray-400 border border-gray-600/50 hover:bg-gray-700/70"
                         }`}
                       >
                         <div className="flex items-center space-x-2">
-                          {isEnabled ? (
+                          {togglingTool === tool.name ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                              <span>Updating...</span>
+                            </>
+                          ) : isEnabled ? (
                             <>
                               <CheckCircle className="w-4 h-4" />
                               <span>Enabled</span>

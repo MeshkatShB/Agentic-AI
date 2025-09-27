@@ -28,7 +28,7 @@ const Settings = () => {
   const [systemInfo, setSystemInfo] = useState(null);
   const [userSettings, setUserSettings] = useState({
     theme: "dark",
-    model: "qwen2.5:3b",
+    model: "qwen3:latest",
     temperature: 0.7,
     max_steps: 10,
     max_tokens: 2000,
