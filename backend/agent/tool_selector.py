@@ -49,6 +49,18 @@ class ToolSelector:
             logger.debug("No valid tools found in registry")
             return None
         
+        # Simple rule-based fallback when LLM is not available
+        query_lower = query.lower()
+        if any(word in query_lower for word in ['فایل', 'file', 'جستجو', 'search', 'پیدا', 'find', 'باگ', 'bug']):
+            if 'search_local_files' in available_tools:
+                # Extract search terms from Persian query
+                search_terms = query.strip()
+                # Remove common Persian question words
+                search_terms = search_terms.replace('در فایلها راجع به', '').replace('چی گفته شده؟', '').replace('؟', '').strip()
+                
+                logger.info(f"Rule-based selection: search_local_files with query '{search_terms}'")
+                return 'search_local_files', {'query': search_terms, 'top_k': 5}
+        
         # Create a prompt for the LLM to select the best tool
         tools_info = "\n".join([
             f"- {tool['name']}: {tool['description']}"

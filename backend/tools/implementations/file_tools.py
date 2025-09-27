@@ -142,8 +142,16 @@ class SearchLocalFilesTool(BaseTool):
                 return []
             
             if not self.document_metadata:
-                logger.warning("Document metadata not available")
-                return []
+                logger.warning("Document metadata not available, trying to reload...")
+                # Try to reload documents
+                documents, metadatas, chunk_ids = await self._load_and_chunk_documents()
+                if documents:
+                    self.document_metadata = metadatas
+                    await self._build_tfidf_index(documents)
+                    logger.info(f"Reloaded {len(documents)} documents")
+                else:
+                    logger.warning("No documents found to reload")
+                    return []
             
             from sklearn.metrics.pairwise import cosine_similarity
             
@@ -540,11 +548,20 @@ class SearchLocalFilesTool(BaseTool):
                 keyword_results = await self._keyword_search(query, top_k, file_type)
                 results = self._combine_results(semantic_results, keyword_results, query, top_k)
             
-            # Filter by minimum score
+            # Filter by minimum score (but be more lenient for debugging)
             filtered_results = [
                 result for result in results 
-                if result.get("combined_score", result.get("score", 0)) >= min_score
+                if result.get("combined_score", result.get("score", 0)) >= (min_score * 0.1)  # Lower threshold for debugging
             ]
+            
+            # Log debugging information
+            logger.info(f"Search query: '{query}'")
+            logger.info(f"Total results before filtering: {len(results)}")
+            logger.info(f"Results after filtering (min_score={min_score * 0.1}): {len(filtered_results)}")
+            
+            if results:
+                logger.info(f"Top result scores: {[r.get('combined_score', r.get('score', 0)) for r in results[:3]]}")
+                logger.info(f"Top result content preview: {results[0].get('document', '')[:200]}...")
             
             # Format results
             formatted_results = []

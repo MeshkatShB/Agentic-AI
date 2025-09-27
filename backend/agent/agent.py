@@ -585,7 +585,26 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
     async def _generate_response_from_tool_result(self, tool_result: Any, tool_name: str) -> str:
         """Generate a natural language response from tool results."""
         try:
-            # Create a prompt to summarize the tool results
+            # Simple rule-based response for search tools
+            if tool_name == "search_local_files" and hasattr(tool_result, 'output'):
+                output_data = tool_result.output
+                if isinstance(output_data, dict) and output_data.get('results'):
+                    results = output_data['results']
+                    if results:
+                        response_parts = []
+                        response_parts.append(f"بر اساس جستجو در فایل‌ها، {len(results)} نتیجه پیدا شد:")
+                        
+                        for i, result in enumerate(results[:3], 1):  # Show top 3 results
+                            file_name = result.get('file_name', 'نامشخص')
+                            content = result.get('content', '')
+                            response_parts.append(f"\n{i}. فایل: {file_name}")
+                            response_parts.append(f"   محتوا: {content}")
+                        
+                        return "\n".join(response_parts)
+                    else:
+                        return "متأسفم، هیچ نتیجه‌ای در فایل‌ها پیدا نشد."
+            
+            # Fallback to LLM for other tools
             prompt = f"""A user asked a question and I used the '{tool_name}' tool to help answer it. 
 
 Tool Result:

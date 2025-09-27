@@ -29,8 +29,8 @@ class Settings:
     CHROMA_PATH: str = "./chroma_db"
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION: str = "agent_memory"
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # Better for Persian
-    EMBEDDING_DIMENSION: int = 384  # Dimension for the multilingual model
+    EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"  # Qwen3-0.6B model for better Persian support
+    EMBEDDING_DIMENSION: int = 1024  # Dimension for the multilingual model
     CHUNK_SIZE: int = 1000  # Characters per chunk
     CHUNK_OVERLAP: int = 200  # Overlap between chunks
     MAX_RETRIEVAL_RESULTS: int = 10  # Maximum results to retrieve

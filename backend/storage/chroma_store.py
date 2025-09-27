@@ -19,9 +19,9 @@ class ChromaStore(VectorStore):
         """Initialize ChromaDB client."""
         super().__init__()
         
-        # Initialize embedding function with multilingual model that supports Persian
+        # Initialize embedding function with configured model
         self.embedding_function = SentenceTransformerEmbeddingFunction(
-            model_name="paraphrase-multilingual-MiniLM-L12-v2"
+            model_name=settings.EMBEDDING_MODEL
         )
         
         # Initialize Chroma client with persistent storage
@@ -72,6 +72,10 @@ class ChromaStore(VectorStore):
                 embedding_function=self.embedding_function
             )
         return self.collections[collection_name]
+    
+    def get_collection(self, collection_name: str = "conversations"):
+        """Get a collection by name."""
+        return self._get_collection(collection_name)
     
     async def add_documents(
         self,
