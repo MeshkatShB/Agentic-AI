@@ -16,19 +16,53 @@ import PrivateRoute from "./components/PrivateRoute";
 import Layout from "./components/Layout";
 
 function App() {
-  const { checkAuth } = useAuthStore();
-  const { theme } = useThemeStore();
+  console.log("App component rendering");
+
+  // Wrap store access in try-catch
+  let authStore = null;
+  let themeStore = null;
+  try {
+    authStore = useAuthStore();
+    themeStore = useThemeStore();
+    console.log("Stores initialized:", { authStore, themeStore });
+  } catch (error) {
+    console.error("Error initializing stores:", error);
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="glass-dark rounded-2xl p-8 max-w-2xl w-full">
+          <h1 className="text-2xl font-bold text-red-500 mb-4">
+            Store Initialization Error
+          </h1>
+          <pre className="text-white overflow-auto p-4 bg-gray-800 rounded">
+            {error.toString()}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  const { checkAuth } = authStore;
+  const { theme } = themeStore;
 
   useEffect(() => {
-    // Check if user is authenticated on mount
-    checkAuth();
+    console.log("App useEffect running");
+    const initializeApp = async () => {
+      try {
+        // Check if user is authenticated on mount
+        await checkAuth();
 
-    // Apply theme
-    if (theme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
+        // Apply theme
+        if (theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+      } catch (error) {
+        console.error("Error in useEffect:", error);
+      }
+    };
+
+    initializeApp();
   }, [checkAuth, theme]);
 
   return (

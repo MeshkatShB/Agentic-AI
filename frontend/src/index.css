@@ -46,6 +46,45 @@
            hover:bg-white/30 transition-all duration-200 shadow-lg hover:shadow-xl;
   }
 
+  /* RTL prose styling */
+  .prose-rtl {
+    direction: rtl;
+    text-align: right;
+  }
+
+  .prose-rtl p,
+  .prose-rtl li,
+  .prose-rtl blockquote {
+    direction: rtl;
+    text-align: right;
+  }
+
+  .prose-rtl ul,
+  .prose-rtl ol {
+    direction: rtl;
+    text-align: right;
+    padding-right: 1.25em;
+    padding-left: 0;
+  }
+
+  .prose-rtl blockquote {
+    border-right: 4px solid #6366f1;
+    border-left: none;
+    padding-right: 1rem;
+    padding-left: 0;
+  }
+
+  .prose-rtl code {
+    direction: ltr;
+    text-align: left;
+    display: inline-block;
+  }
+
+  .prose-rtl pre {
+    direction: ltr;
+    text-align: left;
+  }
+
   /* Glass input */
   .input-glass {
     @apply w-full px-4 py-2 rounded-lg bg-white/10 backdrop-blur-sm border border-white/20 
@@ -99,6 +138,11 @@
   }
 
   /* Scrollbar styling */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -109,11 +153,15 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-gray-400/50 rounded-full hover:bg-gray-500/50;
+    @apply bg-gray-400/50 rounded-full hover:bg-gray-500/50 transition-colors duration-200;
   }
 
   .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-gray-600/50 hover:bg-gray-500/50;
+    @apply bg-gray-600/50 hover:bg-gray-500/70 transition-colors duration-200;
+  }
+
+  .dark .custom-scrollbar {
+    scrollbar-color: rgba(75, 85, 99, 0.5) transparent;
   }
 
   /* Permission dialog */
@@ -178,4 +226,19 @@ body {
     ),
     radial-gradient(at 80% 20%, rgb(120, 50, 75) 0, transparent 50%),
     radial-gradient(at 40% 40%, rgb(50, 100, 120) 0, transparent 50%);
+}
+
+/* Line clamp utilities */
+.line-clamp-1 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.line-clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
