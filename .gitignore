@@ -214,3 +214,9 @@ Data/
 
 # ChromaDB
 chroma_db/
+
+# NodeJS
+node_modules/
+
+# Logs
+logs/
