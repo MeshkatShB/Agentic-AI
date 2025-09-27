@@ -6,6 +6,7 @@ export const useChatStore = create((set, get) => ({
   conversations: [],
   currentConversation: null,
   messages: [],
+  historicalSteps: [], // Store agent steps from previous conversations
   isLoading: false,
   isStreaming: false,
   streamingMessage: "",
@@ -40,16 +41,49 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
+  updateConversation: async (conversationId, updates) => {
+    try {
+      const response = await axios.put(
+        `/chat/conversations/${conversationId}`,
+        updates
+      );
+      const updatedConversation = response.data;
+
+      set((state) => ({
+        conversations: state.conversations.map((conv) =>
+          conv.id === conversationId ? updatedConversation : conv
+        ),
+        currentConversation:
+          state.currentConversation?.id === conversationId
+            ? updatedConversation
+            : state.currentConversation,
+      }));
+
+      toast.success("Conversation updated");
+      return updatedConversation;
+    } catch (error) {
+      toast.error("Failed to update conversation");
+      return null;
+    }
+  },
+
   loadConversation: async (conversationId) => {
     set({ isLoading: true });
     try {
-      const response = await axios.get(`/chat/conversations/${conversationId}`);
-      const { conversation, messages } = response.data;
+      const [conversationResponse, stepsResponse] = await Promise.all([
+        axios.get(`/chat/conversations/${conversationId}`),
+        axios.get(`/chat/conversations/${conversationId}/steps`),
+      ]);
+
+      const { conversation, messages } = conversationResponse.data;
+      const { steps } = stepsResponse.data;
 
       set({
         currentConversation: conversation,
         messages,
+        historicalSteps: steps || [], // Store historical steps
         isLoading: false,
+        currentSteps: [], // Clear current steps when loading new conversation
       });
     } catch (error) {
       set({ isLoading: false });
@@ -57,7 +91,7 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  sendMessage: async (conversationId, content) => {
+  sendMessage: async (conversationId, content, selectedTools = []) => {
     if (!content.trim()) return;
 
     // Add user message immediately
@@ -66,13 +100,23 @@ export const useChatStore = create((set, get) => ({
       role: "user",
       content,
       created_at: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    };
+
+    // Create a placeholder for the assistant's response
+    const assistantPlaceholder = {
+      id: Date.now() + 1,
+      role: "assistant",
+      content: "",
+      created_at: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
     };
 
     set((state) => ({
-      messages: [...state.messages, userMessage],
+      messages: [...state.messages, userMessage, assistantPlaceholder],
       isStreaming: true,
       streamingMessage: "",
-      currentSteps: [],
+      currentSteps: [], // Reset steps for new message
     }));
 
     try {
@@ -84,7 +128,11 @@ export const useChatStore = create((set, get) => ({
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
-          body: JSON.stringify({ content, stream: true }),
+          body: JSON.stringify({
+            content,
+            stream: true,
+            selected_tools: selectedTools,
+          }),
         }
       );
 
@@ -106,12 +154,20 @@ export const useChatStore = create((set, get) => ({
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
+              console.log("Received event:", data.type, data);
 
               if (data.type === "token") {
-                set((state) => ({
-                  streamingMessage: state.streamingMessage + data.content,
-                }));
+                // Update the streaming message in the placeholder
+                set((state) => {
+                  const messages = [...state.messages];
+                  const lastMessage = messages[messages.length - 1];
+                  if (lastMessage.role === "assistant") {
+                    lastMessage.content += data.content;
+                  }
+                  return { messages };
+                });
               } else if (data.type === "step") {
+                // Add new step to the steps panel
                 set((state) => ({
                   currentSteps: [...state.currentSteps, data.step],
                 }));
@@ -120,26 +176,41 @@ export const useChatStore = create((set, get) => ({
                 const approved = await get().requestPermission(data);
                 // Send approval response (in real implementation)
               } else if (data.type === "complete") {
-                const assistantMessage = {
-                  id: Date.now() + 1,
-                  role: "assistant",
-                  content: data.response.final_answer,
-                  steps: data.response.steps,
-                  created_at: new Date().toISOString(),
-                };
-
-                set((state) => ({
-                  messages: [...state.messages, assistantMessage],
-                  isStreaming: false,
-                  streamingMessage: "",
-                  currentSteps: [],
-                }));
+                // Update the final answer
+                console.log("Complete event received:", data);
+                console.log(
+                  "Full response object:",
+                  JSON.stringify(data.response, null, 2)
+                );
+                console.log("Final answer:", data.response?.final_answer);
+                set((state) => {
+                  const messages = [...state.messages];
+                  const lastMessage = messages[messages.length - 1];
+                  console.log("Last message before update:", lastMessage);
+                  if (lastMessage && lastMessage.role === "assistant") {
+                    const finalAnswer =
+                      data.response?.final_answer || "No response received";
+                    console.log("Setting final answer:", finalAnswer);
+                    lastMessage.content = finalAnswer;
+                    lastMessage.created_at = new Date().toISOString();
+                    lastMessage.timestamp = new Date().toISOString();
+                  }
+                  console.log("Messages after update:", messages);
+                  return {
+                    messages,
+                    isStreaming: false,
+                    streamingMessage: "",
+                  };
+                });
               } else if (data.type === "error") {
                 toast.error(data.error);
-                set({
-                  isStreaming: false,
-                  streamingMessage: "",
-                  currentSteps: [],
+                set((state) => {
+                  const messages = state.messages.slice(0, -1); // Remove placeholder
+                  return {
+                    messages,
+                    isStreaming: false,
+                    streamingMessage: "",
+                  };
                 });
               }
             } catch (e) {
@@ -149,7 +220,14 @@ export const useChatStore = create((set, get) => ({
         }
       }
     } catch (error) {
-      set({ isStreaming: false, streamingMessage: "", currentSteps: [] });
+      set((state) => {
+        const messages = state.messages.slice(0, -1); // Remove placeholder on error
+        return {
+          messages,
+          isStreaming: false,
+          streamingMessage: "",
+        };
+      });
       toast.error("Failed to send message");
     }
   },

@@ -19,18 +19,45 @@ export const useAuthStore = create((set, get) => ({
   token: null,
   isAuthenticated: false,
   isLoading: false,
+  isInitialized: false, // Add flag to track if auth has been checked
 
-  checkAuth: () => {
+  checkAuth: async () => {
     const token = localStorage.getItem("token");
     const user = localStorage.getItem("user");
 
     if (token && user) {
+      try {
+        // Set axios header for validation request
+        axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+
+        // Validate token with backend
+        const response = await axios.get("/auth/me");
+        const validatedUser = response.data;
+
+        set({
+          token,
+          user: validatedUser,
+          isAuthenticated: true,
+          isInitialized: true,
+        });
+      } catch (error) {
+        // Token is invalid, clear it
+        console.log("Token validation failed:", error.response?.status);
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        delete axios.defaults.headers.common["Authorization"];
+        set({
+          user: null,
+          token: null,
+          isAuthenticated: false,
+          isInitialized: true,
+        });
+      }
+    } else {
       set({
-        token,
-        user: JSON.parse(user),
-        isAuthenticated: true,
+        isInitialized: true,
+        isAuthenticated: false,
       });
-      axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
     }
   },
 
