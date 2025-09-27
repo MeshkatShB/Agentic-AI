@@ -141,6 +141,10 @@ class SearchLocalFilesTool(BaseTool):
                 logger.warning("TF-IDF index not available")
                 return []
             
+            if not self.document_metadata:
+                logger.warning("Document metadata not available")
+                return []
+            
             from sklearn.metrics.pairwise import cosine_similarity
             
             # Transform query
@@ -155,9 +159,22 @@ class SearchLocalFilesTool(BaseTool):
             results = []
             for idx in top_indices:
                 if similarities[idx] > 0:  # Only include positive similarities
+                    # Check if index is valid
+                    if idx >= len(self.document_metadata):
+                        logger.warning(f"Index {idx} out of bounds for document_metadata (length: {len(self.document_metadata)})")
+                        continue
+                    
+                    # Get chunk_id safely
+                    metadata = self.document_metadata[idx]
+                    chunk_id = metadata.get("chunk_id")
+                    
+                    if not chunk_id:
+                        logger.warning(f"No chunk_id found for index {idx}")
+                        continue
+                    
                     # Get document from vector store
                     doc_results = await self.vector_store.get_by_ids(
-                        [self.document_metadata[idx]["chunk_id"]],
+                        [chunk_id],
                         collection_name="documents"
                     )
                     
@@ -264,18 +281,40 @@ class SearchLocalFilesTool(BaseTool):
                 # Load existing index
                 logger.info("Loading existing document index...")
                 
-                # Get all documents to rebuild TF-IDF index
-                all_docs = await self.vector_store.search(
-                    query="",  # Empty query to get all
-                    k=10000,  # Large number to get all
-                    collection_name="documents"
-                )
-                
-                if all_docs:
-                    documents = [doc["document"] for doc in all_docs]
-                    self.document_metadata = [doc["metadata"] for doc in all_docs]
-                    await self._build_tfidf_index(documents)
-                    logger.info(f"Loaded {len(documents)} existing document chunks")
+                # Try to load existing TF-IDF index first
+                tfidf_path = Path(settings.CHROMA_PATH) / "tfidf_index.pkl"
+                if tfidf_path.exists():
+                    try:
+                        import pickle
+                        with open(tfidf_path, 'rb') as f:
+                            data = pickle.load(f)
+                            self.tfidf_vectorizer = data['vectorizer']
+                            self.tfidf_matrix = data['matrix']
+                            self.document_metadata = data['metadata']
+                        logger.info(f"Loaded existing TF-IDF index with {len(self.document_metadata)} metadata entries")
+                        logger.info(f"TF-IDF matrix shape: {self.tfidf_matrix.shape if self.tfidf_matrix is not None else 'None'}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load existing TF-IDF index: {e}, rebuilding...")
+                        # Fall back to rebuilding
+                        documents, metadatas, chunk_ids = await self._load_and_chunk_documents()
+                        if documents:
+                            await self._build_tfidf_index(documents)
+                            self.document_metadata = metadatas
+                            logger.info(f"Rebuilt TF-IDF index with {len(documents)} chunks")
+                        else:
+                            logger.warning("No documents found to rebuild index")
+                            return False
+                else:
+                    logger.warning("No existing TF-IDF index found, rebuilding...")
+                    # Load documents and rebuild index
+                    documents, metadatas, chunk_ids = await self._load_and_chunk_documents()
+                    if documents:
+                        await self._build_tfidf_index(documents)
+                        self.document_metadata = metadatas
+                        logger.info(f"Rebuilt TF-IDF index with {len(documents)} chunks")
+                    else:
+                        logger.warning("No documents found to rebuild index")
+                        return False
             
             return True
             
@@ -441,6 +480,21 @@ class SearchLocalFilesTool(BaseTool):
         try:
             self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(documents)
             logger.info(f"Built TF-IDF index with {self.tfidf_matrix.shape[0]} documents")
+            
+            # Save the TF-IDF index to disk
+            tfidf_path = Path(settings.CHROMA_PATH) / "tfidf_index.pkl"
+            tfidf_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            import pickle
+            with open(tfidf_path, 'wb') as f:
+                pickle.dump({
+                    'vectorizer': self.tfidf_vectorizer,
+                    'matrix': self.tfidf_matrix,
+                    'metadata': self.document_metadata
+                }, f)
+            
+            logger.info(f"Saved TF-IDF index to {tfidf_path}")
+            
         except Exception as e:
             logger.error(f"Failed to build TF-IDF index: {e}")
             self.tfidf_matrix = None
