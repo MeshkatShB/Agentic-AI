@@ -2,11 +2,11 @@ import React from "react";
 import { motion } from "framer-motion";
 import { User, Bot, Copy, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { format } from "date-fns";
 import clsx from "clsx";
 import toast from "react-hot-toast";
+import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
+import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 
 const MessageList = ({ messages, streamingMessage, isStreaming }) => {
   const [copiedId, setCopiedId] = React.useState(null);
@@ -18,9 +18,24 @@ const MessageList = ({ messages, streamingMessage, isStreaming }) => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // Function to detect RTL text (Persian, Arabic, Hebrew, etc.)
+  const isRTL = (text) => {
+    if (!text) return false;
+    // RTL Unicode ranges: Arabic (0600-06FF), Persian (0600-06FF), Hebrew (0590-05FF)
+    const rtlRegex =
+      /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+    return rtlRegex.test(text);
+  };
+
+  // Function to get text direction
+  const getTextDirection = (content) => {
+    return isRTL(content) ? "rtl" : "ltr";
+  };
+
   const renderMessage = (message, index) => {
     const isUser = message.role === "user";
     const content = message.content;
+    const textDirection = getTextDirection(content);
 
     return (
       <motion.div
@@ -46,8 +61,19 @@ const MessageList = ({ messages, streamingMessage, isStreaming }) => {
               ? "bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-br-sm"
               : "glass-dark border border-gray-700/50 rounded-bl-sm"
           )}
+          dir={textDirection}
+          style={{
+            textAlign: textDirection === "rtl" ? "right" : "left",
+            fontFamily:
+              textDirection === "rtl" ? "Tahoma, Arial, sans-serif" : "inherit",
+          }}
         >
-          <div className="prose prose-invert max-w-none">
+          <div
+            className={clsx(
+              "prose prose-invert max-w-none",
+              textDirection === "rtl" && "prose-rtl"
+            )}
+          >
             <ReactMarkdown
               components={{
                 code({ node, inline, className, children, ...props }) {
@@ -55,7 +81,7 @@ const MessageList = ({ messages, streamingMessage, isStreaming }) => {
                   return !inline && match ? (
                     <div className="relative group">
                       <SyntaxHighlighter
-                        style={vscDarkPlus}
+                        style={atomOneDark}
                         language={match[1]}
                         PreTag="div"
                         {...props}
@@ -131,8 +157,24 @@ const MessageList = ({ messages, streamingMessage, isStreaming }) => {
             <Bot className="w-5 h-5 text-white" />
           </div>
 
-          <div className="max-w-[70%] rounded-2xl rounded-bl-sm px-4 py-3 glass-dark border border-gray-700/50">
-            <div className="prose prose-invert max-w-none">
+          <div
+            className="max-w-[70%] rounded-2xl rounded-bl-sm px-4 py-3 glass-dark border border-gray-700/50"
+            dir={getTextDirection(streamingMessage)}
+            style={{
+              textAlign:
+                getTextDirection(streamingMessage) === "rtl" ? "right" : "left",
+              fontFamily:
+                getTextDirection(streamingMessage) === "rtl"
+                  ? "Tahoma, Arial, sans-serif"
+                  : "inherit",
+            }}
+          >
+            <div
+              className={clsx(
+                "prose prose-invert max-w-none",
+                getTextDirection(streamingMessage) === "rtl" && "prose-rtl"
+              )}
+            >
               <ReactMarkdown>{streamingMessage}</ReactMarkdown>
             </div>
             <div className="mt-2 pt-2 border-t border-gray-700/50">
