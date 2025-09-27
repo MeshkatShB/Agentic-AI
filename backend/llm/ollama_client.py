@@ -95,22 +95,54 @@ class OllamaClient:
             data["tools"] = tools
         
         try:
-            async with self.client.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json=data
-            ) as response:
-                response.raise_for_status()
-                
-                async for line in response.aiter_lines():
-                    if line:
-                        chunk = json.loads(line)
-                        yield chunk
-                        
-                        if not stream and chunk.get("done"):
-                            break
+            # First try /api/chat endpoint
+            try:
+                async with self.client.stream(
+                    "POST",
+                    f"{self.base_url}/api/chat",
+                    json=data
+                ) as response:
+                    response.raise_for_status()
+                    
+                    async for line in response.aiter_lines():
+                        if line:
+                            chunk = json.loads(line)
+                            yield chunk
+                            
+                            if not stream and chunk.get("done"):
+                                break
+                    return
+            except httpx.HTTPError as chat_error:
+                logger.warning(f"Chat API failed, falling back to generate: {chat_error}")
+            
+            # Fallback to /api/generate endpoint
+            # Convert messages to prompt
+            prompt = "\n".join([
+                f"{msg['role'].upper()}: {msg['content']}"
+                for msg in messages
+            ])
+            
+            async for chunk in self.generate(
+                model=model,
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                tools=tools
+            ):
+                if "error" in chunk:
+                    yield chunk
+                else:
+                    # Convert generate response to chat format
+                    yield {
+                        "message": {
+                            "role": "assistant",
+                            "content": chunk.get("response", "")
+                        },
+                        "done": chunk.get("done", False)
+                    }
         
-        except httpx.HTTPError as e:
+        except Exception as e:
             logger.error(f"Ollama API error: {e}")
             yield {"error": str(e)}
     
