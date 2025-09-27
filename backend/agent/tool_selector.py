@@ -67,12 +67,24 @@ Your task:
 2. Select the most appropriate tool from the list above
 3. Suggest appropriate parameters for that tool
 
+IMPORTANT: 
+- For search tools, extract the actual search terms from the user query
+- If the user asks to search for something, use the search terms as the "query" parameter
+- For Persian queries, extract the Persian search terms
+- Don't leave the "query" parameter empty - extract meaningful search terms
+
+Examples:
+- User: "search for bug reports" → query: "bug reports"
+- User: "find documents about performance" → query: "performance"
+- User: "دستور العمل کنترل عملکرد سرور" → query: "دستور العمل کنترل عملکرد سرور"
+
 Respond with ONLY a JSON object in this exact format:
 {{
     "selected_tool": "tool_name",
     "reasoning": "brief explanation of why this tool was selected",
     "suggested_parameters": {{
-        "parameter_name": "parameter_value"
+        "query": "extracted_search_terms",
+        "other_parameter": "value"
     }}
 }}
 
@@ -186,7 +198,14 @@ If no tool is appropriate, respond with:
                 if default_value is not None:
                     cleaned_params[required_param] = default_value
                 else:
-                    # Set reasonable defaults based on type
+                    # For critical parameters like 'query', don't set empty defaults
+                    # Let the tool handle the validation and provide meaningful error messages
+                    if required_param == "query":
+                        logger.warning(f"Required parameter 'query' is missing for tool '{tool_name}'")
+                        # Don't set a default - let the tool handle the validation
+                        continue
+                    
+                    # Set reasonable defaults based on type for non-critical parameters
                     param_type = param_spec.get("type", "string")
                     if param_type == "integer":
                         cleaned_params[required_param] = 0
