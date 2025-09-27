@@ -2,6 +2,7 @@
 
 import chromadb
 from chromadb.config import Settings
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from typing import List, Dict, Optional, Any
 import uuid
 from backend.config import settings
@@ -17,6 +18,11 @@ class ChromaStore(VectorStore):
     def __init__(self):
         """Initialize ChromaDB client."""
         super().__init__()
+        
+        # Initialize embedding function with multilingual model that supports Persian
+        self.embedding_function = SentenceTransformerEmbeddingFunction(
+            model_name="paraphrase-multilingual-MiniLM-L12-v2"
+        )
         
         # Initialize Chroma client with persistent storage
         self.client = chromadb.PersistentClient(
@@ -35,17 +41,20 @@ class ChromaStore(VectorStore):
             # Create default collections
             self.collections["conversations"] = self.client.get_or_create_collection(
                 name="conversations",
-                metadata={"description": "Conversation history and messages"}
+                metadata={"description": "Conversation history and messages"},
+                embedding_function=self.embedding_function
             )
             
             self.collections["documents"] = self.client.get_or_create_collection(
                 name="documents",
-                metadata={"description": "Indexed documents and files"}
+                metadata={"description": "Indexed documents and files"},
+                embedding_function=self.embedding_function
             )
             
             self.collections["tools"] = self.client.get_or_create_collection(
                 name="tools",
-                metadata={"description": "Tool execution history"}
+                metadata={"description": "Tool execution history"},
+                embedding_function=self.embedding_function
             )
             
             logger.info("ChromaDB initialized successfully")
@@ -59,7 +68,8 @@ class ChromaStore(VectorStore):
         """Get or create a collection."""
         if collection_name not in self.collections:
             self.collections[collection_name] = self.client.get_or_create_collection(
-                name=collection_name
+                name=collection_name,
+                embedding_function=self.embedding_function
             )
         return self.collections[collection_name]
     
@@ -78,9 +88,6 @@ class ChromaStore(VectorStore):
         if ids is None:
             ids = [str(uuid.uuid4()) for _ in documents]
         
-        # Generate embeddings
-        embeddings = self.generate_embeddings(documents)
-        
         # Ensure metadatas is provided
         if metadatas is None:
             metadatas = [{} for _ in documents]
@@ -88,7 +95,6 @@ class ChromaStore(VectorStore):
         try:
             collection.add(
                 documents=documents,
-                embeddings=embeddings,
                 metadatas=metadatas,
                 ids=ids
             )
@@ -111,13 +117,10 @@ class ChromaStore(VectorStore):
         
         collection = self._get_collection(collection_name)
         
-        # Generate query embedding
-        query_embedding = self.generate_embedding(query)
-        
         try:
             # Search with optional filter
             results = collection.query(
-                query_embeddings=[query_embedding],
+                query_texts=[query],
                 n_results=k,
                 where=filter if filter else None,
                 include=["documents", "metadatas", "distances"]
@@ -186,7 +189,6 @@ class ChromaStore(VectorStore):
             
             if document:
                 update_args["documents"] = [document]
-                update_args["embeddings"] = [self.generate_embedding(document)]
             
             if metadata:
                 update_args["metadatas"] = [metadata]
@@ -224,7 +226,8 @@ class ChromaStore(VectorStore):
             # Delete and recreate the collection
             self.client.delete_collection(name=collection_name)
             self.collections[collection_name] = self.client.create_collection(
-                name=collection_name
+                name=collection_name,
+                embedding_function=self.embedding_function
             )
             logger.info(f"Cleared collection {collection_name}")
             return True
