@@ -18,20 +18,30 @@ import toast from "react-hot-toast";
 import { useAuthStore } from "../stores/authStore";
 
 const Tools = () => {
-  const { user } = useAuthStore();
+  const { user, refreshUserData } = useAuthStore((state) => ({
+    user: state.user,
+    refreshUserData: state.refreshUserData,
+  }));
   const [tools, setTools] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [userAllowedTools, setUserAllowedTools] = useState(
+  const [togglingTool, setTogglingTool] = useState(null);
+  const [forceUpdate, setForceUpdate] = useState(0);
+  const [localAllowedTools, setLocalAllowedTools] = useState(
     user?.allowed_tools || []
   );
-  const [togglingTool, setTogglingTool] = useState(null);
-  const [skipNextSync, setSkipNextSync] = useState(false);
+
+  // Use local state that we control directly
+  const userAllowedTools = localAllowedTools;
 
   console.log("Tools component render:", {
     user: user?.username,
     userAllowedTools,
     authStoreAllowedTools: user?.allowed_tools,
+    userObjectId: user?.id,
+    userObjectRef: user,
+    forceUpdate,
+    timestamp: Date.now(),
   });
 
   useEffect(() => {
@@ -39,22 +49,16 @@ const Tools = () => {
     loadPermissions();
   }, []);
 
-  // Sync local userAllowedTools with auth store user data
+  // Sync local state with auth store
   useEffect(() => {
-    console.log(
-      "Syncing userAllowedTools with user data:",
-      user?.allowed_tools,
-      "skipNextSync:",
-      skipNextSync
-    );
-
-    if (skipNextSync) {
-      setSkipNextSync(false);
-      return;
+    if (user?.allowed_tools) {
+      console.log(
+        "Syncing localAllowedTools with auth store:",
+        user.allowed_tools
+      );
+      setLocalAllowedTools([...user.allowed_tools]);
     }
-
-    setUserAllowedTools(user?.allowed_tools || []);
-  }, [user?.allowed_tools, skipNextSync]);
+  }, [user?.allowed_tools]);
 
   const loadTools = async () => {
     try {
@@ -85,6 +89,18 @@ const Tools = () => {
     });
     setTogglingTool(toolName);
 
+    // Update local state immediately for responsive UI
+    const newAllowedTools = currentlyEnabled
+      ? localAllowedTools.filter((tool) => tool !== toolName)
+      : [...localAllowedTools, toolName];
+
+    console.log("Updating local state immediately:", {
+      from: localAllowedTools,
+      to: newAllowedTools,
+    });
+
+    setLocalAllowedTools(newAllowedTools);
+
     try {
       const response = await axios.post("/tools/grant-permission", {
         tool_name: toolName,
@@ -92,22 +108,6 @@ const Tools = () => {
       });
 
       console.log("API response:", response.data);
-
-      // Update local state immediately for responsive UI
-      const newAllowedTools = currentlyEnabled
-        ? userAllowedTools.filter((tool) => tool !== toolName)
-        : [...userAllowedTools, toolName];
-
-      console.log(
-        "Updating userAllowedTools from:",
-        userAllowedTools,
-        "to:",
-        newAllowedTools
-      );
-      setUserAllowedTools(newAllowedTools);
-
-      // Skip the next sync to prevent overriding our local update
-      setSkipNextSync(true);
 
       // Update auth store to persist the change
       await refreshUserData();
@@ -118,28 +118,14 @@ const Tools = () => {
     } catch (error) {
       console.error("Tool permission update error:", error);
       // Revert local state on error
-      setUserAllowedTools(user?.allowed_tools || []);
+      setLocalAllowedTools(user?.allowed_tools || []);
       toast.error("Failed to update tool permission");
     } finally {
       setTogglingTool(null);
     }
   };
 
-  const refreshUserData = async () => {
-    try {
-      // Fetch updated user data to get the latest allowed_tools
-      const response = await axios.get("/auth/me");
-      const updatedUser = response.data;
-
-      console.log("Refreshed user data:", updatedUser);
-      console.log("Updated allowed_tools:", updatedUser.allowed_tools);
-
-      // Update the user in auth store
-      useAuthStore.setState({ user: updatedUser });
-    } catch (error) {
-      console.error("Failed to refresh user data:", error);
-    }
-  };
+  // refreshUserData is now available from useAuthStore hook
 
   const getToolIcon = (toolName) => {
     if (toolName.includes("file") || toolName.includes("read")) {
@@ -182,13 +168,34 @@ const Tools = () => {
     <div className="h-full overflow-y-auto custom-scrollbar">
       <div className="max-w-6xl mx-auto p-6">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Tools & Permissions
-          </h1>
-          <p className="text-gray-400">
-            Manage which tools the AI agent can use and their permissions
-          </p>
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-2">
+              Tools & Permissions
+            </h1>
+            <p className="text-gray-400">
+              Manage which tools the AI agent can use and their permissions
+            </p>
+          </div>
+
+          {/* Debug refresh button */}
+          <button
+            onClick={async () => {
+              console.log("Manual refresh clicked");
+              const updatedUser = await refreshUserData();
+              if (updatedUser?.allowed_tools) {
+                setLocalAllowedTools([...updatedUser.allowed_tools]);
+              }
+              setForceUpdate((prev) => prev + 1);
+              toast.success("User data refreshed");
+            }}
+            className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-all duration-200"
+          >
+            <div className="flex items-center space-x-2">
+              <Search className="w-4 h-4" />
+              <span className="text-sm">Refresh</span>
+            </div>
+          </button>
         </div>
 
         {/* Permission levels */}
@@ -245,12 +252,14 @@ const Tools = () => {
                 const isEnabled = userAllowedTools.includes(tool.name);
                 console.log(
                   `Tool ${tool.name}: isEnabled=${isEnabled}, userAllowedTools:`,
-                  userAllowedTools
+                  userAllowedTools,
+                  `user.allowed_tools:`,
+                  user?.allowed_tools
                 );
 
                 return (
                   <motion.div
-                    key={tool.name}
+                    key={`${tool.name}-${forceUpdate}-${isEnabled}`}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     whileHover={{ x: 4 }}

@@ -89,7 +89,7 @@ const ToolSelector = ({ onToolsChange, selectedTools = [] }) => {
 
   useEffect(() => {
     loadAvailableTools();
-  }, []);
+  }, [user?.allowed_tools]); // Reload when user's allowed tools change
 
   useEffect(() => {
     setLocalSelectedTools(selectedTools);
@@ -116,7 +116,12 @@ const ToolSelector = ({ onToolsChange, selectedTools = [] }) => {
     try {
       setIsLoading(true);
       const response = await axios.get("/tools/available");
-      setAvailableTools(response.data);
+      // Filter tools to only show those the user has permission for
+      const userAllowedTools = user?.allowed_tools || [];
+      const filteredTools = response.data.filter((tool) =>
+        userAllowedTools.includes(tool.name)
+      );
+      setAvailableTools(filteredTools);
     } catch (error) {
       console.error("Failed to load tools:", error);
       toast.error("Failed to load available tools");

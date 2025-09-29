@@ -1,7 +1,9 @@
 """Tools API endpoints."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
@@ -10,6 +12,7 @@ from backend.auth import get_current_user
 from backend.tools import tool_registry, ToolPermission
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class ToolInfo(BaseModel):
@@ -215,12 +218,19 @@ async def grant_permission(
     # Get current allowed tools
     allowed_tools = current_user.allowed_tools or []
     
+    logger.info(f"Current user {current_user.username} allowed_tools: {allowed_tools}")
+    logger.info(f"Request: grant={request.grant}, tool_name={request.tool_name}")
+    
     if request.grant and request.tool_name not in allowed_tools:
         # Add tool
         allowed_tools.append(request.tool_name)
         current_user.allowed_tools = allowed_tools
+        # Mark the JSON field as modified so SQLAlchemy knows to update it
+        flag_modified(current_user, "allowed_tools")
+        logger.info(f"Adding tool {request.tool_name}, new allowed_tools: {allowed_tools}")
         db.commit()
         db.refresh(current_user)
+        logger.info(f"After commit, user allowed_tools: {current_user.allowed_tools}")
         
         return {"message": f"Granted access to {request.tool_name}", "success": True}
     
@@ -228,9 +238,14 @@ async def grant_permission(
         # Remove tool
         allowed_tools.remove(request.tool_name)
         current_user.allowed_tools = allowed_tools
+        # Mark the JSON field as modified so SQLAlchemy knows to update it
+        flag_modified(current_user, "allowed_tools")
+        logger.info(f"Removing tool {request.tool_name}, new allowed_tools: {allowed_tools}")
         db.commit()
         db.refresh(current_user)
+        logger.info(f"After commit, user allowed_tools: {current_user.allowed_tools}")
         
         return {"message": f"Revoked access to {request.tool_name}", "success": True}
     
+    logger.info("No change needed - tool already in desired state")
     return {"message": "No change needed", "success": True}

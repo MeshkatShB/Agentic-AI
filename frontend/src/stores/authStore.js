@@ -157,4 +157,26 @@ export const useAuthStore = create((set, get) => ({
       return false;
     }
   },
+
+  refreshUserData: async () => {
+    try {
+      const response = await axios.get("/auth/me");
+      const updatedUser = response.data;
+
+      console.log("refreshUserData: fetched user data:", updatedUser);
+
+      // Update localStorage with fresh user data
+      localStorage.setItem("user", JSON.stringify(updatedUser));
+
+      // Update store
+      set({ user: updatedUser });
+
+      console.log("refreshUserData: store updated, current state:", get().user);
+
+      return updatedUser;
+    } catch (error) {
+      console.error("Failed to refresh user data:", error);
+      throw error;
+    }
+  },
 }));

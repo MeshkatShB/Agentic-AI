@@ -1,5 +1,6 @@
 """Authentication API endpoints."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from backend.auth import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class UserSignup(BaseModel):
@@ -147,6 +149,9 @@ async def get_profile(
     current_user: User = Depends(get_current_user)
 ):
     """Get current user profile."""
+    
+    logger.info(f"GET /auth/me for user {current_user.username}")
+    logger.info(f"User allowed_tools: {current_user.allowed_tools}")
     
     return UserProfile(
         id=current_user.id,
