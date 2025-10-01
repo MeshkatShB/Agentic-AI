@@ -31,6 +31,7 @@ class Settings:
     QDRANT_COLLECTION: str = "agent_memory"
     EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"  # Qwen3-0.6B model for better Persian support
     EMBEDDING_DIMENSION: int = 1024  # Dimension for the multilingual model
+    EMBEDDING_DEVICE: str = "cuda"  # "auto", "cpu", "cuda", "mps" (auto detects GPU)
     CHUNK_SIZE: int = 1000  # Characters per chunk
     CHUNK_OVERLAP: int = 200  # Overlap between chunks
     MAX_RETRIEVAL_RESULTS: int = 10  # Maximum results to retrieve
@@ -45,6 +46,9 @@ class Settings:
     MAX_TOKENS_PER_STEP: int = 2000
     STEP_TIMEOUT_SECONDS: int = 30
     REQUIRE_TOOL_CONFIRMATION: bool = True
+    USE_LANGGRAPH: bool = False  # Deprecated
+    REASONING_MODE: str = "simple"  # Deprecated
+    AGENT_TYPE: str = "simple"  # Only base Agent is used
     
     # Web Search (Optional)
     ENABLE_WEB_SEARCH: bool = True

@@ -15,7 +15,7 @@ from backend.models import Base, engine, get_db, User, Conversation, Message
 from backend.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
-from backend.api import auth_router, chat_router, tools_router, settings_router
+from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(tools_router, prefix="/api/tools", tags=["Tools"])
+app.include_router(custom_tools_router, prefix="/api/custom-tools", tags=["Custom Tools"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 
 
@@ -181,5 +182,5 @@ if __name__ == "__main__":
         "backend.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=settings.DEBUG
     )
