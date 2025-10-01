@@ -4,7 +4,10 @@ import chromadb
 from chromadb.config import Settings
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from typing import List, Dict, Optional, Any
+from pathlib import Path
+import json
 import uuid
+import torch
 from backend.config import settings
 from .vector_store import VectorStore
 import logging
@@ -19,9 +22,13 @@ class ChromaStore(VectorStore):
         """Initialize ChromaDB client."""
         super().__init__()
         
-        # Initialize embedding function with configured model
+        # Get device for embedding function
+        device = self._get_device()
+        
+        # Initialize embedding function with configured model and device
         self.embedding_function = SentenceTransformerEmbeddingFunction(
-            model_name=settings.EMBEDDING_MODEL
+            model_name=settings.EMBEDDING_MODEL,
+            device=device
         )
         
         # Initialize Chroma client with persistent storage
@@ -38,6 +45,9 @@ class ChromaStore(VectorStore):
     async def initialize(self) -> bool:
         """Initialize the vector store."""
         try:
+            # Ensure embedding compatibility across restarts (handle dim mismatch)
+            self._ensure_embedding_compatibility()
+            
             # Create default collections
             self.collections["conversations"] = self.client.get_or_create_collection(
                 name="conversations",
@@ -108,6 +118,20 @@ class ChromaStore(VectorStore):
             
         except Exception as e:
             logger.error(f"Failed to add documents: {e}")
+            if "dimension" in str(e).lower() or "dimensionality" in str(e).lower():
+                # Auto-recover by recreating collection, then retry once
+                await self.clear_collection(collection_name)
+                try:
+                    retry_collection = self._get_collection(collection_name)
+                    retry_collection.add(
+                        documents=documents,
+                        metadatas=metadatas,
+                        ids=ids
+                    )
+                    logger.info(f"Recovered and added {len(documents)} documents to {collection_name}")
+                    return ids
+                except Exception as e2:
+                    logger.error(f"Retry after clearing collection failed: {e2}")
             return []
     
     async def search(
@@ -145,6 +169,8 @@ class ChromaStore(VectorStore):
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
+            if "dimension" in str(e).lower() or "dimensionality" in str(e).lower():
+                await self.clear_collection(collection_name)
             return []
     
     async def get_by_ids(
@@ -175,6 +201,8 @@ class ChromaStore(VectorStore):
             
         except Exception as e:
             logger.error(f"Failed to get documents by IDs: {e}")
+            if "dimension" in str(e).lower() or "dimensionality" in str(e).lower():
+                await self.clear_collection(collection_name)
             return []
     
     async def update_document(
@@ -203,6 +231,8 @@ class ChromaStore(VectorStore):
             
         except Exception as e:
             logger.error(f"Failed to update document: {e}")
+            if "dimension" in str(e).lower() or "dimensionality" in str(e).lower():
+                await self.clear_collection(collection_name)
             return False
     
     async def delete_documents(
@@ -221,6 +251,8 @@ class ChromaStore(VectorStore):
             
         except Exception as e:
             logger.error(f"Failed to delete documents: {e}")
+            if "dimension" in str(e).lower() or "dimensionality" in str(e).lower():
+                await self.clear_collection(collection_name)
             return False
     
     async def clear_collection(self, collection_name: str) -> bool:
@@ -239,3 +271,26 @@ class ChromaStore(VectorStore):
         except Exception as e:
             logger.error(f"Failed to clear collection: {e}")
             return False
+
+    def _ensure_embedding_compatibility(self):
+        """Ensure persisted collections match current embedding model; reset if changed."""
+        try:
+            meta_path = Path(settings.CHROMA_PATH) / "embedding_meta.json"
+            current = {"model": settings.EMBEDDING_MODEL}
+            if meta_path.exists():
+                saved = json.loads(meta_path.read_text(encoding="utf-8"))
+                if saved.get("model") != current["model"]:
+                    # Model changed: drop known collections to avoid dimension mismatch
+                    for name in ["documents", "conversations", "tools"]:
+                        try:
+                            self.client.delete_collection(name=name)
+                        except Exception:
+                            pass
+                    meta_path.write_text(json.dumps(current), encoding="utf-8")
+                # else: ok
+            else:
+                # First run: write meta
+                Path(settings.CHROMA_PATH).mkdir(parents=True, exist_ok=True)
+                meta_path.write_text(json.dumps(current), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Could not ensure embedding compatibility: {e}")
