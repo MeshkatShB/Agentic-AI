@@ -14,7 +14,10 @@ class OllamaClient:
     
     def __init__(self, base_url: str = None):
         self.base_url = base_url or settings.OLLAMA_BASE_URL
-        self.client = httpx.AsyncClient(timeout=30.0)
+        # Use a more generous timeout; align with app step timeout when available
+        default_timeout = getattr(settings, "STEP_TIMEOUT_SECONDS", 30)
+        # Add a buffer since model generation may approach the step timeout
+        self.client = httpx.AsyncClient(timeout=float(default_timeout) + 10.0)
     
     async def generate(
         self,
