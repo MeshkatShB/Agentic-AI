@@ -17,6 +17,94 @@ class ToolSelector:
         """Initialize the tool selector."""
         self.llm_client = OllamaClient()
     
+    async def plan_tools(self, query: str, available_tools: List[str]) -> List[Tuple[str, Dict]]:
+        """
+        Produce an ordered multi-step tool plan.
+
+        Returns a list of (tool_name, suggested_args). Empty list if no plan.
+        """
+        logger.info(f"ToolSelector.plan_tools called with tools: {available_tools}")
+        if not available_tools:
+            return []
+
+        # Gather tool descriptions
+        tool_descriptions = []
+        for tool_name in available_tools:
+            tool = tool_registry.get_tool(tool_name)
+            if tool:
+                tool_descriptions.append({
+                    "name": tool_name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                })
+
+        # Simple deterministic fallbacks
+        ql = (query or "").lower()
+        # If searching then reading files makes sense
+        if ("search" in ql or "find" in ql or "جستجو" in ql) and "search_local_files" in available_tools:
+            plan: List[Tuple[str, Dict]] = [("search_local_files", {"query": query.strip(), "top_k": 5})]
+            # If read_file is also available and user mentions a specific filename, add it second
+            if "read_file" in available_tools and (".txt" in ql or ".md" in ql or ".py" in ql):
+                plan.append(("read_file", {"path": query.strip()}))
+            return plan
+
+        # LLM-based planner
+        tools_info_lines = []
+        for t in tool_descriptions:
+            tools_info_lines.append(f"- {t['name']}: {t['description']}")
+        tools_info = "\n".join(tools_info_lines)
+
+        plan_prompt = f"""You are a tool planner. Given a user query and available tools, plan a short sequence
+of up to 3 steps to solve the task. Use tools only from the list. Prefer minimal steps.
+
+User Query: "{query}"
+
+Available Tools:\n{tools_info}
+
+Return ONLY JSON with this exact shape:
+{{
+  "steps": [
+    {{ "tool": "tool_name", "parameters": {{ ... }} }},
+    ...
+  ]
+}}
+
+For search tasks, ensure parameters include a non-empty "query" string.
+"""
+
+        try:
+            response_text = ""
+            async for chunk in self.llm_client.chat(
+                model=settings.DEFAULT_MODEL,
+                messages=[{"role": "user", "content": plan_prompt}],
+                temperature=0.1,
+                max_tokens=600,
+                stream=True,
+            ):
+                if "message" in chunk:
+                    response_text += chunk["message"].get("content", "")
+
+            # Extract JSON
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            if json_start < 0 or json_end <= json_start:
+                return []
+            import json as _json
+            data = _json.loads(response_text[json_start:json_end])
+            steps = data.get("steps", []) or []
+
+            plan: List[Tuple[str, Dict]] = []
+            for item in steps:
+                name = item.get("tool")
+                params = item.get("parameters", {})
+                if name in available_tools:
+                    # Validate/clean via existing helper
+                    plan.append((name, self._validate_parameters(name, params)))
+            return plan
+        except Exception as e:
+            logger.error(f"Planner error: {e}")
+            return []
+
     async def analyze_query(self, query: str, available_tools: List[str]) -> Optional[Tuple[str, Dict]]:
         """
         Analyze user query and intelligently select the most appropriate tool using LLM.

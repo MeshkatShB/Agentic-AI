@@ -3,7 +3,9 @@
 from typing import Dict, Optional, AsyncGenerator
 import asyncio
 from backend.agent.agent import Agent, AgentResponse
+from backend.tools import tool_registry
 from backend.models import User, Conversation, Message, AgentStep
+from backend.config import settings
 from sqlalchemy.orm import Session
 import logging
 
@@ -29,13 +31,14 @@ class AgentExecutor:
         if user.id not in self.active_agents:
             # Create new agent with user preferences
             preferences = user.preferences or {}
-            
-            agent = Agent(
-                model=preferences.get("model", "qwen3:latest"),
-                temperature=preferences.get("temperature", 0.7),
-                max_steps=preferences.get("max_steps", 10),
-                max_tokens=preferences.get("max_tokens", 2000)
+            kwargs = dict(
+                model=preferences.get("model", settings.DEFAULT_MODEL),
+                temperature=preferences.get("temperature", settings.MODEL_TEMPERATURE),
+                max_steps=preferences.get("max_steps", settings.MAX_STEPS_PER_REQUEST),
+                max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP)
             )
+            # Always use the base Agent (ReasoningAgent removed)
+            agent = Agent(**kwargs)
             
             self.active_agents[user.id] = agent
             self.execution_locks[user.id] = asyncio.Lock()
@@ -74,15 +77,22 @@ class AgentExecutor:
                 db.add(user_msg)
                 db.commit()
                 
+                # Ensure user's active custom tools are registered
+                try:
+                    registered = tool_registry.register_custom_tools_for_user(db, user.id)
+                    logger.info(f"Registered {registered} custom tools for user {user.username}")
+                except Exception as reg_err:
+                    logger.warning(f"Failed to register custom tools for user {user.id}: {reg_err}")
+
                 # Determine which tools to use
-                if selected_tools:
-                    # Use selected tools from chat interface
-                    tools_to_use = selected_tools
-                    logger.info(f"Using selected tools: {tools_to_use}")
+                # Treat an empty list from the UI as an explicit "no tools" choice.
+                if selected_tools is not None:
+                    tools_to_use = list(selected_tools)
+                    logger.info(f"Using UI-selected tools (may be empty): {tools_to_use}")
                 else:
-                    # Use user's allowed tools from permissions
+                    # If UI didn't provide a selection, fall back to user's allowed tools
                     tools_to_use = user.allowed_tools or []
-                    logger.info(f"User {user.username} allowed_tools: {tools_to_use}")
+                    logger.info(f"UI provided no selection; using allowed_tools: {tools_to_use}")
                 
                 # Run agent
                 async for event in agent.run(
@@ -170,8 +180,13 @@ class AgentExecutor:
                         await asyncio.sleep(0.5)
                     
                     elif event.get("type") == "complete":
-                        # Save final response
-                        response_data = event["response"]
+                        # Save final response - handle different response formats
+                        response_data = event.get("response", {})
+                        
+                        # Extract data with fallbacks for different agent types
+                        steps = response_data.get("steps", [])
+                        total_tokens = response_data.get("total_tokens", 0)
+                        final_answer = response_data.get("final_answer", event.get("content", ""))
                         
                         # Update conversation
                         conversation = db.query(Conversation).filter(
@@ -179,20 +194,27 @@ class AgentExecutor:
                         ).first()
                         
                         if conversation:
-                            conversation.total_messages += len(response_data["steps"]) + 1
-                            conversation.total_tokens += response_data["total_tokens"]
+                            step_count = len(steps) if isinstance(steps, list) else 1
+                            conversation.total_messages += step_count + 1
+                            conversation.total_tokens += total_tokens
                             db.commit()
                         
-                        # Save to vector memory
-                        await agent.save_to_memory(
-                            conversation_id=conversation_id,
-                            message=response_data["final_answer"],
-                            metadata={
-                                "role": "assistant",
-                                "user_id": user.id,
-                                "tokens": response_data["total_tokens"]
-                            }
-                        )
+                        # Save to vector memory if agent supports it
+                        if hasattr(agent, 'save_to_memory'):
+                            try:
+                                await agent.save_to_memory(
+                                    conversation_id=conversation_id,
+                                    message=final_answer,
+                                    metadata={
+                                        "role": "assistant",
+                                        "user_id": user.id,
+                                        "tokens": total_tokens
+                                    }
+                                )
+                            except Exception as memory_error:
+                                logger.warning(f"Failed to save to memory: {memory_error}")
+                        else:
+                            logger.debug("Agent does not support memory saving")
                         
                         yield event
                     

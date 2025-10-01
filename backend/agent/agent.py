@@ -83,7 +83,7 @@ class Agent:
     
     def __init__(
         self,
-        model: str = None,
+        model: str = "qwen3:latest",
         temperature: float = 0.7,
         max_steps: int = 10,
         max_tokens: int = 2000
@@ -121,11 +121,60 @@ class Agent:
         self._current_query = query  # Store query for forced tool calls
         
         try:
-            # Step 1: Analyze query and select appropriate tool
-            tool_selection = await self.tool_selector.analyze_query(query, allowed_tools)
+            # Step 1: If multiple tools are available, build a multi-step plan; otherwise single-tool logic
+            planned_steps: List[Dict[str, Any]] = []
+            if allowed_tools and len(allowed_tools) > 1:
+                plan = await self.tool_selector.plan_tools(query, allowed_tools)
+                if plan:
+                    # Execute each planned tool step-by-step
+                    for tool_name, suggested_args in plan:
+                        async for result in self._execute_selected_tool(tool_name, suggested_args, stream):
+                            yield result
+                    # After running plan, produce final answer
+                    end_time = datetime.utcnow()
+                    final_answer = self._get_final_answer()
+                    response_dict = {
+                        "type": "complete",
+                        "response": AgentResponse(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            query=query,
+                            steps=self.steps,
+                            final_answer=final_answer,
+                            total_tokens=self.total_tokens,
+                            execution_time=(end_time - start_time).total_seconds(),
+                            success=True,
+                        ).dict(),
+                    }
+                    yield serialize_datetime(response_dict)
+                    return
+
+            # Fallback single-tool selection
+            if allowed_tools and len(allowed_tools) == 1:
+                forced_tool = allowed_tools[0]
+                suggested_args: Dict[str, Any] = {}
+                q_lower = (query or "").strip()
+                if forced_tool in ["search_local_files", "rag_search", "web_search"]:
+                    suggested_args["query"] = q_lower
+                tool_selection = (forced_tool, suggested_args)
+            else:
+                tool_selection = await self.tool_selector.analyze_query(query, allowed_tools)
+            
+            # If a tool was explicitly selected in the UI but the selector returned None,
+            # force using the first selected tool with sensible default arguments.
+            if not tool_selection and allowed_tools:
+                forced_tool = allowed_tools[0]
+                suggested_args: Dict[str, Any] = {}
+                q_lower = (query or "").strip()
+                if forced_tool in ["search_local_files", "rag_search", "web_search"]:
+                    suggested_args["query"] = q_lower
+                # If we cannot infer required params, fall back to selector/LLM
+                if suggested_args:
+                    logger.info(f"Forcing tool '{forced_tool}' with args inferred from query")
+                    tool_selection = (forced_tool, suggested_args)
             
             if not tool_selection:
-                # No tool selected, provide a direct response
+                # No tool selected or forced, provide a direct response
                 direct_response = await self._generate_direct_response(query)
                 
                 step = AgentStep(
@@ -216,7 +265,6 @@ TOOL_CALL: search_local_files
 
 AVAILABLE TOOLS:
 - search_local_files: Search local files for content
-- rag_search: Advanced document search with AI
 - web_search: Search the internet
 - read_file: Read a specific file
 - get_system_info: Get system information
@@ -238,50 +286,20 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
     def _parse_response(self, response: str) -> Dict:
         """Parse agent response for actions."""
         
-        response_lower = response.lower()
+        # Clean the response to remove any thinking tags first
+        cleaned_response = self._clean_response_text(response)
         
-        # Extract thinking content if present
-        thinking_content = ""
-        working_response = response
+        response_lower = cleaned_response.lower()
         
-        # Check for <think> or <thinking> tags
-        if "<think>" in response_lower or "<thinking>" in response_lower:
-            import re
-            # Extract thinking content - prioritize <think> tags
-            think_pattern = r'<think>(.*?)</think>'
-            thinking_pattern = r'<thinking>(.*?)</thinking>'
-            
-            think_matches = re.findall(think_pattern, response, re.DOTALL | re.IGNORECASE)
-            thinking_matches = re.findall(thinking_pattern, response, re.DOTALL | re.IGNORECASE)
-            
-            if think_matches:
-                thinking_content = "\n".join(think_matches).strip()
-                working_response = re.sub(think_pattern, '', response, flags=re.DOTALL | re.IGNORECASE).strip()
-            elif thinking_matches:
-                thinking_content = "\n".join(thinking_matches).strip()
-                working_response = re.sub(thinking_pattern, '', response, flags=re.DOTALL | re.IGNORECASE).strip()
-            
-            # Clean up any extra whitespace
-            working_response = re.sub(r'\n\s*\n', '\n', working_response).strip()
-        
-        # If we have thinking content, create a thinking step
-        if thinking_content:
-            # Return thinking step first
-            return {
-                "type": "thinking",
-                "content": thinking_content,
-                "remaining_response": working_response
-            }
-        
-        # Continue with normal parsing on the working response
-        working_response_lower = working_response.lower()
+        # Continue with normal parsing on the cleaned response
+        working_response_lower = response_lower
         
         # Special case: If user asked to search but model is just thinking, force a tool call
         original_query = getattr(self, '_current_query', '').lower()
         if (original_query and 
             ('search' in original_query or 'find' in original_query) and 
             'local files' in original_query and
-            not working_response and  # No remaining response after thinking
+            not cleaned_response and  # No remaining response after thinking
             not any(pattern in response.lower() for pattern in ['tool_call:', 'final_answer:'])):
             
             # Extract search term from query
@@ -300,16 +318,16 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
         # Check for final answer
         if "final_answer:" in working_response_lower:
             answer_start = working_response_lower.index("final_answer:") + 13
-            answer = working_response[answer_start:].strip()
+            answer = cleaned_response[answer_start:].strip()
             return {
                 "type": "final_answer",
                 "content": answer,
-                "reasoning": working_response[:answer_start].strip()
+                "reasoning": cleaned_response[:answer_start].strip()
             }
         
         # Check for tool call
-        logger.debug(f"Checking for tool calls in working_response: {working_response}")
-        tool_calls = self.model_adapter.parse_tool_calls(working_response)
+        logger.debug(f"Checking for tool calls in cleaned_response: {cleaned_response}")
+        tool_calls = self.model_adapter.parse_tool_calls(cleaned_response)
         logger.debug(f"Parsed tool calls: {tool_calls}")
         if tool_calls:
             tool_call = tool_calls[0]  # Take first tool call
@@ -323,8 +341,8 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
                 plan_start = response_lower.index("plan:") + 5
                 plan_end = response_lower.find("\n", plan_start)
                 if plan_end == -1:
-                    plan_end = len(response)
-                plan = response[plan_start:plan_end].strip()
+                    plan_end = len(cleaned_response)
+                plan = cleaned_response[plan_start:plan_end].strip()
             
             if "request_permission:" in response_lower:
                 perm_start = response_lower.index("request_permission:") + 19
@@ -332,8 +350,8 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
                 if perm_end == -1:
                     perm_end = response_lower.find("tool_call:", perm_start)
                 if perm_end == -1:
-                    perm_end = len(response)
-                permission_reason = response[perm_start:perm_end].strip()
+                    perm_end = len(cleaned_response)
+                permission_reason = cleaned_response[perm_start:perm_end].strip()
             
             return {
                 "type": "tool_call",
@@ -341,22 +359,22 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
                 "tool_args": tool_call["arguments"],
                 "plan": plan,
                 "permission_reason": permission_reason,
-                "reasoning": response
+                "reasoning": cleaned_response
             }
         
         # Check for reflection
         if "reflection:" in response_lower or "observation:" in response_lower:
             return {
                 "type": "reflection",
-                "content": response,
-                "reasoning": response
+                "content": cleaned_response,
+                "reasoning": cleaned_response
             }
         
         # Default to reflection
         return {
             "type": "reflection",
-            "content": response,
-            "reasoning": response
+            "content": cleaned_response,
+            "reasoning": cleaned_response
         }
     
     def _get_final_answer(self) -> str:
@@ -448,22 +466,30 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
     async def _generate_direct_response(self, query: str) -> str:
         """Generate a direct response when no tool is needed."""
         try:
-            response_text = ""
-            async for chunk in self.llm_client.chat(
-                model=self.model,
-                messages=[{"role": "user", "content": query}],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=True
-            ):
-                if "message" in chunk:
-                    response_text += chunk["message"].get("content", "")
-            
-            # Clean the response to remove any thinking tags
+            async def _run() -> str:
+                response_text = ""
+                async for chunk in self.llm_client.chat(
+                    model=self.model,
+                    messages=[{"role": "user", "content": query}],
+                    temperature=self.temperature,
+                    max_tokens=min(self.max_tokens, 512),
+                    stream=False
+                ):
+                    if "message" in chunk and chunk["message"].get("content"):
+                        content = str(chunk["message"]["content"])
+                        if content and content != "None" and content != "undefined":
+                            response_text += content
+                    if chunk.get("done"):
+                        break
+                return response_text
+
+            # Use configurable timeout from settings with a small safety buffer
+            step_timeout = getattr(settings, "STEP_TIMEOUT_SECONDS", 30)
+            response_text = await asyncio.wait_for(_run(), timeout=step_timeout + 5)
+
             cleaned_response = self._clean_response_text(response_text)
-            
             return cleaned_response if cleaned_response else "I couldn't generate a response."
-            
+
         except Exception as e:
             logger.error(f"Error generating direct response: {e}")
             return f"I encountered an error while processing your request: {str(e)}"
@@ -616,21 +642,28 @@ Please provide a clear, helpful response to the user based on these results. Be 
 
 """
 
-            response_text = ""
-            async for chunk in self.llm_client.chat(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,  # Lower temperature for more consistent responses
-                max_tokens=self.max_tokens,
-                stream=True
-            ):
-                if "message" in chunk:
-                    response_text += chunk["message"].get("content", "")
-            
-            # Clean the response to remove any thinking tags
+            async def _run() -> str:
+                response_text = ""
+                async for chunk in self.llm_client.chat(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=min(self.max_tokens, 400),
+                    stream=False
+                ):
+                    if "message" in chunk and chunk["message"].get("content"):
+                        content = str(chunk["message"]["content"])
+                        if content and content != "None" and content != "undefined":
+                            response_text += content
+                    if chunk.get("done"):
+                        break
+                return response_text
+
+            step_timeout = getattr(settings, "STEP_TIMEOUT_SECONDS", 30)
+            response_text = await asyncio.wait_for(_run(), timeout=step_timeout + 5)
+
             cleaned_response = self._clean_response_text(response_text)
-            
-            return cleaned_response if cleaned_response else f"I used the {tool_name} tool and got results, but couldn't format a proper response."
+            return cleaned_response if cleaned_response else f"I used the {tool_name} tool and got results."
             
         except Exception as e:
             logger.error(f"Error generating response from tool result: {e}")
