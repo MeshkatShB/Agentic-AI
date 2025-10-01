@@ -7,6 +7,7 @@ from .implementations import (
     ReadFileTool,
     ParseDocumentTool,
     WebSearchTool,
+    HttpRequestTool,
     DatabaseQueryTool
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "ReadFileTool",
     "ParseDocumentTool",
     "WebSearchTool",
+    "HttpRequestTool",
     "DatabaseQueryTool"
 ]

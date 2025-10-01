@@ -506,3 +506,134 @@ class WebScrapeTool(BaseTool):
                 output=None,
                 error=f"Scraping failed: {str(e)}"
             )
+
+
+class HttpRequestTool(BaseTool):
+    """Generic HTTP request tool for connecting to external services/APIs."""
+    
+    @property
+    def name(self) -> str:
+        return "http_request"
+    
+    @property
+    def description(self) -> str:
+        return "Send HTTP requests (GET, POST, PUT, DELETE) to any URL with headers and body"
+    
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "method": {
+                    "type": "string",
+                    "description": "HTTP method",
+                    "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"],
+                    "default": "GET"
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Request URL"
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "HTTP headers as key/value",
+                    "default": {}
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Query string parameters",
+                    "default": {}
+                },
+                "json": {
+                    "type": "object",
+                    "description": "JSON body for POST/PUT/PATCH",
+                    "default": None
+                },
+                "data": {
+                    "type": "object",
+                    "description": "Form body as key/value",
+                    "default": None
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Request timeout in seconds",
+                    "default": max(5, min(60, settings.WEB_SEARCH_TIMEOUT if hasattr(settings, 'WEB_SEARCH_TIMEOUT') else 10))
+                },
+                "allow_insecure": {
+                    "type": "boolean",
+                    "description": "Allow insecure SSL (not recommended)",
+                    "default": False
+                }
+            },
+            "required": ["url"]
+        }
+    
+    @property
+    def permission(self) -> ToolPermission:
+        return ToolPermission.NETWORK
+    
+    async def execute(self, **kwargs) -> ToolResult:
+        """Execute an HTTP request with aiohttp."""
+        method = (kwargs.get("method") or "GET").upper()
+        url = kwargs.get("url")
+        headers = kwargs.get("headers") or {}
+        params = kwargs.get("params") or {}
+        json_body = kwargs.get("json")
+        data_body = kwargs.get("data")
+        timeout = int(kwargs.get("timeout", 10))
+        allow_insecure = bool(kwargs.get("allow_insecure", False))
+        
+        if not url or not isinstance(url, str):
+            return ToolResult(success=False, output=None, error="A valid 'url' is required")
+        
+        # Normalize URL (prepend https if scheme missing)
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        
+        try:
+            ssl_context = False if allow_insecure else None
+            timeout_cfg = aiohttp.ClientTimeout(total=max(1, min(120, timeout)))
+            async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+                async with session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=json_body,
+                    data=data_body,
+                    ssl=ssl_context
+                ) as response:
+                    content_type = response.headers.get("Content-Type", "")
+                    status = response.status
+                    text = await response.text()
+                    
+                    output: Dict[str, Any] = {
+                        "url": str(response.url),
+                        "status": status,
+                        "headers": dict(response.headers),
+                        "ok": 200 <= status < 300
+                    }
+                    
+                    # Try to parse JSON when applicable
+                    if "application/json" in content_type.lower():
+                        try:
+                            output["json"] = await response.json()
+                        except Exception:
+                            output["text"] = text[:5000]
+                    else:
+                        output["text"] = text[:5000]
+                    
+                    return ToolResult(
+                        success=200 <= status < 300,
+                        output=output,
+                        error=None if 200 <= status < 300 else f"HTTP {status}",
+                        metadata={
+                            "timestamp": datetime.now().isoformat(),
+                            "method": method
+                        }
+                    )
+        except asyncio.TimeoutError:
+            return ToolResult(success=False, output=None, error="Request timeout")
+        except Exception as e:
+            logger.error(f"HTTP request failed: {e}")
+            return ToolResult(success=False, output=None, error=str(e))
