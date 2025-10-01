@@ -220,3 +220,7 @@ node_modules/
 
 # Logs
 logs/
+
+# LangGraph
+langgraph_db/
+graphs/
