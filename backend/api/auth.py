@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from typing import Optional
 from datetime import timedelta
 from pydantic import BaseModel, EmailStr
@@ -172,12 +173,17 @@ async def update_profile(
 ):
     """Update current user profile."""
     
+    logger.info(f"Updating profile for user {current_user.username}: {updates}")
+    
     # Update allowed fields
     allowed_fields = ["full_name", "email", "preferences", "allowed_tools"]
     
     for field, value in updates.items():
         if field in allowed_fields:
             setattr(current_user, field, value)
+            # Mark JSON fields as modified so SQLAlchemy knows to update them
+            if field in ["preferences", "allowed_tools"]:
+                flag_modified(current_user, field)
     
     db.commit()
     db.refresh(current_user)

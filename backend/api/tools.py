@@ -70,12 +70,13 @@ async def list_tools(
 
 @router.get("/available", response_model=List[ToolInfo])
 async def list_available_tools(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """List all available tools in the system."""
+    """List all available tools for the current user (built-in + custom)."""
     
-    # Get all registered tools
-    all_tools = tool_registry.list_tools()
+    # Get all built-in registered tools (exclude custom)
+    all_tools = tool_registry.list_builtin_tools()
     
     tools = []
     for tool_name in all_tools:
@@ -88,6 +89,14 @@ async def list_available_tools(
                 parameters=tool.parameters
             ))
     
+    # Get custom tools created by the user (metadata only; do not add to 'available' list)
+    from backend.models import CustomTool
+    custom_tools = db.query(CustomTool).filter(
+        CustomTool.created_by == current_user.id,
+        CustomTool.is_active == True
+    ).all()
+    # Intentionally NOT adding custom tools to 'tools' so they only appear in the custom section
+
     return tools
 
 
@@ -133,6 +142,15 @@ async def execute_tool(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access to this tool is not allowed"
         )
+    
+    # Ensure user's custom tools are registered
+    from backend.models import get_db as _get_db
+    try:
+        db = next(_get_db())
+        tool_registry.register_custom_tools_for_user(db, current_user.id)
+        db.close()
+    except Exception:
+        pass
     
     # Get tool
     tool = tool_registry.get_tool(request.tool_name)
