@@ -76,7 +76,7 @@ async def read_file_content(file_path: Path) -> str:
         return ""
 
 
-async def index_documents():
+async def index_documents(reindex: bool = False):
     """Index all documents in the data directory."""
     data_dir = Path("data")
     
@@ -87,6 +87,8 @@ async def index_documents():
     # Get vector store
     vector_store = get_vector_store()
     await vector_store.initialize()
+    if reindex:
+        await vector_store.clear_collection("documents")
     
     # Find all supported files
     supported_extensions = ['.html', '.pdf', '.docx', '.txt', '.md']
@@ -230,10 +232,20 @@ async def index_documents():
             metadatas=metadatas,
             collection_name="documents"
         )
+        if not ids:
+            # If auto-recovery cleared the collection, try once more
+            logger.info("Retrying indexing after vector store recovery...")
+            ids = await vector_store.add_documents(
+                documents=documents,
+                metadatas=metadatas,
+                collection_name="documents"
+            )
         logger.info(f"Successfully indexed {len(ids)} chunks")
     else:
         logger.info("No content to index")
 
 
 if __name__ == "__main__":
-    asyncio.run(index_documents())
+    # Usage: python backend/index_documents.py [--reindex]
+    reindex_flag = "--reindex" in sys.argv
+    asyncio.run(index_documents(reindex=reindex_flag))
