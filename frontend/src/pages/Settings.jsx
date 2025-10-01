@@ -33,6 +33,8 @@ const Settings = () => {
     max_steps: 10,
     max_tokens: 2000,
     require_confirmation: true,
+    reasoning_mode: "simple",
+    agent_type: "simple",
   });
   const [pathSettings, setPathSettings] = useState({
     allowed_paths: [],
@@ -292,6 +294,65 @@ const Settings = () => {
                     ))}
                   </select>
                 </div>
+
+                {/* Agent Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Agent Type
+                  </label>
+                  <select
+                    value={userSettings.agent_type || "simple"}
+                    onChange={(e) =>
+                      setUserSettings({
+                        ...userSettings,
+                        agent_type: e.target.value,
+                      })
+                    }
+                    className="input-glass text-white"
+                  >
+                    <option value="simple">
+                      Simple Agent - Basic responses
+                    </option>
+                    {/* Reasoning agent removed */}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    LangGraph provides the most advanced reasoning and tool
+                    integration
+                  </p>
+                </div>
+
+                {/* Reasoning Mode (only show for reasoning agent) */}
+                {userSettings.agent_type === "reasoning" && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Reasoning Mode
+                    </label>
+                    <select
+                      value={userSettings.reasoning_mode || "chain_of_thought"}
+                      onChange={(e) =>
+                        setUserSettings({
+                          ...userSettings,
+                          reasoning_mode: e.target.value,
+                        })
+                      }
+                      className="input-glass text-white"
+                    >
+                      <option value="simple">
+                        Simple - Fast, direct responses
+                      </option>
+                      <option value="chain_of_thought">
+                        Chain of Thought - Detailed reasoning process
+                      </option>
+                      <option value="react">
+                        ReAct - Reason and Act iteratively
+                      </option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Chain of Thought provides step-by-step reasoning but takes
+                      longer
+                    </p>
+                  </div>
+                )}
 
                 {/* Temperature */}
                 <div>

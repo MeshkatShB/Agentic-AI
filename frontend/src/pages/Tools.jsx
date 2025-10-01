@@ -12,20 +12,27 @@ import {
   XCircle,
   AlertCircle,
   Info,
+  Plus,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
 import { useAuthStore } from "../stores/authStore";
+import { useNavigate } from "react-router-dom";
+import { Pencil } from "lucide-react";
 
 const Tools = () => {
+  const navigate = useNavigate();
   const { user, refreshUserData } = useAuthStore((state) => ({
     user: state.user,
     refreshUserData: state.refreshUserData,
   }));
   const [tools, setTools] = useState([]);
+  const [customTools, setCustomTools] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingCustomTools, setIsLoadingCustomTools] = useState(true);
   const [togglingTool, setTogglingTool] = useState(null);
+  const [deletingToolId, setDeletingToolId] = useState(null);
   const [forceUpdate, setForceUpdate] = useState(0);
   const [localAllowedTools, setLocalAllowedTools] = useState(
     user?.allowed_tools || []
@@ -47,6 +54,7 @@ const Tools = () => {
   useEffect(() => {
     loadTools();
     loadPermissions();
+    loadCustomTools();
   }, []);
 
   // Sync local state with auth store
@@ -81,11 +89,50 @@ const Tools = () => {
     }
   };
 
-  const toggleTool = async (toolName, currentlyEnabled) => {
+  const loadCustomTools = async () => {
+    try {
+      setIsLoadingCustomTools(true);
+      const response = await axios.get("/custom-tools/");
+      setCustomTools(response.data);
+    } catch (error) {
+      console.error("Failed to load custom tools:", error);
+      toast.error("Failed to load custom tools");
+    } finally {
+      setIsLoadingCustomTools(false);
+    }
+  };
+
+  const deleteCustomTool = async (tool) => {
+    const confirmed = window.confirm(
+      `Delete custom tool "${tool.display_name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeletingToolId(tool.id);
+      await axios.delete(`/custom-tools/${tool.id}`);
+      setCustomTools((prev) => prev.filter((t) => t.id !== tool.id));
+      setLocalAllowedTools((prev) => prev.filter((n) => n !== tool.name));
+      await refreshUserData();
+      toast.success(`Deleted ${tool.display_name}`);
+    } catch (error) {
+      console.error("Failed to delete custom tool:", error);
+      toast.error(error.response?.data?.detail || "Failed to delete tool");
+    } finally {
+      setDeletingToolId(null);
+    }
+  };
+
+  const toggleTool = async (
+    toolName,
+    currentlyEnabled,
+    isCustomTool = false
+  ) => {
     console.log("toggleTool called:", {
       toolName,
       currentlyEnabled,
       userAllowedTools,
+      isCustomTool,
     });
     setTogglingTool(toolName);
 
@@ -102,12 +149,27 @@ const Tools = () => {
     setLocalAllowedTools(newAllowedTools);
 
     try {
-      const response = await axios.post("/tools/grant-permission", {
-        tool_name: toolName,
-        grant: !currentlyEnabled,
-      });
+      let response;
 
-      console.log("API response:", response.data);
+      if (isCustomTool) {
+        // For custom tools, we need to add/remove them from user's allowed_tools directly
+        // Since custom tools are user-created, they should be automatically available to the creator
+        // We'll update the user's allowed_tools list directly through the auth API
+        response = await axios.put("/auth/me", {
+          allowed_tools: newAllowedTools,
+        });
+        console.log(
+          "Custom tool permission updated via auth API:",
+          response.data
+        );
+      } else {
+        // For built-in tools, use the existing grant-permission endpoint
+        response = await axios.post("/tools/grant-permission", {
+          tool_name: toolName,
+          grant: !currentlyEnabled,
+        });
+        console.log("Built-in tool permission updated:", response.data);
+      }
 
       // Update auth store to persist the change
       await refreshUserData();
@@ -178,24 +240,36 @@ const Tools = () => {
             </p>
           </div>
 
-          {/* Debug refresh button */}
-          <button
-            onClick={async () => {
-              console.log("Manual refresh clicked");
-              const updatedUser = await refreshUserData();
-              if (updatedUser?.allowed_tools) {
-                setLocalAllowedTools([...updatedUser.allowed_tools]);
-              }
-              setForceUpdate((prev) => prev + 1);
-              toast.success("User data refreshed");
-            }}
-            className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-all duration-200"
-          >
-            <div className="flex items-center space-x-2">
-              <Search className="w-4 h-4" />
-              <span className="text-sm">Refresh</span>
-            </div>
-          </button>
+          <div className="flex space-x-3">
+            {/* Create Custom Tool button */}
+            <button
+              onClick={() => navigate("/add-tool")}
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 transition-all duration-200 flex items-center space-x-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="text-sm font-medium">Create Tool</span>
+            </button>
+
+            {/* Debug refresh button */}
+            <button
+              onClick={async () => {
+                console.log("Manual refresh clicked");
+                const updatedUser = await refreshUserData();
+                if (updatedUser?.allowed_tools) {
+                  setLocalAllowedTools([...updatedUser.allowed_tools]);
+                }
+                await loadCustomTools(); // Also refresh custom tools
+                setForceUpdate((prev) => prev + 1);
+                toast.success("Data refreshed");
+              }}
+              className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-all duration-200"
+            >
+              <div className="flex items-center space-x-2">
+                <Search className="w-4 h-4" />
+                <span className="text-sm">Refresh</span>
+              </div>
+            </button>
+          </div>
         </div>
 
         {/* Permission levels */}
@@ -329,7 +403,7 @@ const Tools = () => {
 
                       {/* Enable/Disable toggle */}
                       <button
-                        onClick={() => toggleTool(tool.name, isEnabled)}
+                        onClick={() => toggleTool(tool.name, isEnabled, false)}
                         disabled={togglingTool === tool.name}
                         className={`px-4 py-2 rounded-lg transition-all duration-200 ${
                           togglingTool === tool.name
@@ -358,6 +432,188 @@ const Tools = () => {
                           )}
                         </div>
                       </button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+        </motion.div>
+
+        {/* Custom Tools */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="glass-dark rounded-xl p-6 mt-8"
+        >
+          <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
+            <Plus className="w-5 h-5 mr-2 text-primary-400" />
+            Custom Tools
+          </h2>
+
+          {isLoadingCustomTools ? (
+            <div className="text-center py-8">
+              <div className="loading-dots">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
+          ) : customTools.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <Plus className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>No custom tools created yet</p>
+              <p className="text-sm">
+                Click "Create Tool" to build your own AI tools
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {customTools.map((customTool) => {
+                const isEnabled = userAllowedTools.includes(customTool.name);
+
+                return (
+                  <motion.div
+                    key={`custom-${customTool.name}-${forceUpdate}-${isEnabled}`}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    whileHover={{ x: 4 }}
+                    className="p-4 bg-gray-800/50 rounded-lg border border-gray-700/50 hover:bg-gray-800/70 transition-all duration-200"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start space-x-3 flex-1">
+                        <div className="text-primary-400 mt-1">
+                          <Plus className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <h3 className="font-semibold text-white">
+                              {customTool.display_name}
+                            </h3>
+                            <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full border border-purple-500/30">
+                              Custom
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-400 mb-2">
+                            {customTool.description}
+                          </p>
+
+                          {/* Permission badge */}
+                          <div className="mb-2">
+                            <span
+                              className={`inline-flex px-2 py-1 text-xs rounded-full border ${getPermissionColor(
+                                customTool.permission_level
+                              )}`}
+                            >
+                              {customTool.permission_level.replace("_", " ")}
+                            </span>
+                          </div>
+
+                          {/* Parameters */}
+                          {customTool.parameters_schema?.properties &&
+                            Object.keys(customTool.parameters_schema.properties)
+                              .length > 0 && (
+                              <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
+                                <p className="text-xs font-medium text-gray-400 mb-2">
+                                  Parameters:
+                                </p>
+                                <div className="space-y-1">
+                                  {Object.entries(
+                                    customTool.parameters_schema.properties
+                                  ).map(([param, spec]) => (
+                                    <div
+                                      key={param}
+                                      className="flex items-start text-xs"
+                                    >
+                                      <span className="text-primary-400 font-mono">
+                                        {param}
+                                      </span>
+                                      <span className="text-gray-500 mx-1">
+                                        :
+                                      </span>
+                                      <span className="text-gray-400">
+                                        {spec.type}
+                                        {customTool.parameters_schema.required?.includes(
+                                          param
+                                        ) && (
+                                          <span className="text-yellow-400 ml-1">
+                                            *
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        {/* Edit custom tool */}
+                        <button
+                          onClick={() =>
+                            navigate(`/edit-tool/${customTool.id}`)
+                          }
+                          className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-all duration-200 flex items-center space-x-1"
+                        >
+                          <Pencil className="w-4 h-4" />
+                          <span>Edit</span>
+                        </button>
+
+                        {/* Remove custom tool */}
+                        <button
+                          onClick={() => deleteCustomTool(customTool)}
+                          disabled={deletingToolId === customTool.id}
+                          className={`px-3 py-2 rounded-lg border transition-all duration-200 flex items-center space-x-1 ${
+                            deletingToolId === customTool.id
+                              ? "bg-gray-700/50 text-gray-500 border-gray-600/50 cursor-not-allowed"
+                              : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                          }`}
+                        >
+                          <span className="w-4 h-4 inline-block">🗑️</span>
+                          <span>
+                            {deletingToolId === customTool.id
+                              ? "Removing..."
+                              : "Remove"}
+                          </span>
+                        </button>
+
+                        {/* Enable/Disable toggle */}
+                        <button
+                          onClick={() =>
+                            toggleTool(customTool.name, isEnabled, true)
+                          }
+                          disabled={togglingTool === customTool.name}
+                          className={`px-4 py-2 rounded-lg transition-all duration-200 ${
+                            togglingTool === customTool.name
+                              ? "bg-gray-700/50 text-gray-500 border border-gray-600/50 cursor-not-allowed"
+                              : isEnabled
+                              ? "bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30"
+                              : "bg-gray-700/50 text-gray-400 border border-gray-600/50 hover:bg-gray-700/70"
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2">
+                            {togglingTool === customTool.name ? (
+                              <>
+                                <div className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                                <span>Updating...</span>
+                              </>
+                            ) : isEnabled ? (
+                              <>
+                                <CheckCircle className="w-4 h-4" />
+                                <span>Enabled</span>
+                              </>
+                            ) : (
+                              <>
+                                <XCircle className="w-4 h-4" />
+                                <span>Disabled</span>
+                              </>
+                            )}
+                          </div>
+                        </button>
+                      </div>
                     </div>
                   </motion.div>
                 );

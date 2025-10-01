@@ -115,13 +115,39 @@ const ToolSelector = ({ onToolsChange, selectedTools = [] }) => {
   const loadAvailableTools = async () => {
     try {
       setIsLoading(true);
-      const response = await axios.get("/tools/available");
-      // Filter tools to only show those the user has permission for
       const userAllowedTools = user?.allowed_tools || [];
-      const filteredTools = response.data.filter((tool) =>
+
+      // Fetch built-in available tools and user's custom tools in parallel
+      const [builtinRes, customRes] = await Promise.all([
+        axios.get("/tools/available"),
+        axios.get("/custom-tools/"), // active_only defaults to true on backend
+      ]);
+
+      // Built-in tools are already in correct shape
+      const builtin = Array.isArray(builtinRes.data) ? builtinRes.data : [];
+
+      // Map custom tools to ToolInfo shape and include only those enabled by the user
+      const customEnabled = (
+        Array.isArray(customRes.data) ? customRes.data : []
+      )
+        .filter((t) => userAllowedTools.includes(t.name))
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          permission: t.permission_level,
+          parameters: t.parameters_schema || {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        }));
+
+      // Combine and filter by user's allowed_tools
+      const combined = [...builtin, ...customEnabled].filter((tool) =>
         userAllowedTools.includes(tool.name)
       );
-      setAvailableTools(filteredTools);
+
+      setAvailableTools(combined);
     } catch (error) {
       console.error("Failed to load tools:", error);
       toast.error("Failed to load available tools");
@@ -180,7 +206,7 @@ const ToolSelector = ({ onToolsChange, selectedTools = [] }) => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed top-20 right-4 w-96 glass-dark rounded-xl border border-gray-700/50 shadow-xl z-50"
+            className="fixed top-20 right-4 w-96 glass-dark rounded-xl border border-gray-700/50 shadow-xl z-[9999]"
             style={{ maxHeight: "calc(100vh - 120px)" }}
           >
             {/* Header */}

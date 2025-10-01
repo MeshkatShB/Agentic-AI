@@ -168,7 +168,11 @@ export const useChatStore = create((set, get) => ({
                   const messages = [...state.messages];
                   const lastMessage = messages[messages.length - 1];
                   if (lastMessage.role === "assistant") {
-                    lastMessage.content += data.content;
+                    // The token field contains the actual text, not 'content'
+                    const tokenText = data.token || data.content || "";
+                    if (tokenText && tokenText !== "undefined") {
+                      lastMessage.content += tokenText;
+                    }
                   }
                   return { messages };
                 });
