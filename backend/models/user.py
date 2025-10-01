@@ -2,6 +2,7 @@
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Text
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from backend.models.database import Base
 
 
@@ -43,6 +44,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     last_login = Column(DateTime(timezone=True))
+    
+    # Relationships
+    custom_tools = relationship("CustomTool", back_populates="creator")
     
     def to_dict(self):
         """Convert user to dictionary."""

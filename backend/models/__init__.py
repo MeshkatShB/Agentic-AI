@@ -3,6 +3,7 @@
 from .database import Base, engine, SessionLocal, get_db
 from .user import User
 from .conversation import Conversation, Message, AgentStep
+from .custom_tool import CustomTool
 
 __all__ = [
     "Base",
@@ -12,5 +13,6 @@ __all__ = [
     "User",
     "Conversation",
     "Message",
-    "AgentStep"
+    "AgentStep",
+    "CustomTool"
 ]
