@@ -229,6 +229,7 @@ const Chat = () => {
             <ToolSelector
               selectedTools={selectedTools}
               onToolsChange={setSelectedTools}
+              showSteps={showSteps}
             />
 
             {/* Selected tools indicator */}

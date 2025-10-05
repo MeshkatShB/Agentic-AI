@@ -18,7 +18,11 @@ import axios from "axios";
 import toast from "react-hot-toast";
 import { useAuthStore } from "../stores/authStore";
 
-const ToolSelector = ({ onToolsChange, selectedTools = [] }) => {
+const ToolSelector = ({
+  onToolsChange,
+  selectedTools = [],
+  showSteps = false,
+}) => {
   const { user, refreshUserData } = useAuthStore();
   const [isOpen, setIsOpen] = useState(false);
   const [availableTools, setAvailableTools] = useState([]);
@@ -206,8 +210,11 @@ const ToolSelector = ({ onToolsChange, selectedTools = [] }) => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed top-20 right-4 w-96 glass-dark rounded-xl border border-gray-700/50 shadow-xl z-[9999]"
-            style={{ maxHeight: "calc(100vh - 120px)" }}
+            className="fixed top-20 w-96 glass-dark rounded-xl border border-gray-700/50 shadow-xl z-[9999]"
+            style={{
+              maxHeight: "calc(100vh - 120px)",
+              right: showSteps ? "340px" : "16px", // Account for steps panel width (320px) + margin
+            }}
           >
             {/* Header */}
             <div className="p-4 border-b border-gray-700/50">
