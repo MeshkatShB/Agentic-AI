@@ -144,6 +144,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.azureenv/
 
 # Spyder project settings
 .spyderproject
