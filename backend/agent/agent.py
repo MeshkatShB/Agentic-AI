@@ -83,7 +83,7 @@ class Agent:
     
     def __init__(
         self,
-        model: str = "qwen3:latest",
+        model: str = None,
         temperature: float = 0.7,
         max_steps: int = 10,
         max_tokens: int = 2000

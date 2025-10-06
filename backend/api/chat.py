@@ -61,7 +61,7 @@ async def create_conversation(
     conversation = Conversation(
         user_id=current_user.id,
         title=data.title or "New Conversation",
-        model=data.model or current_user.preferences.get("model"),
+        model=data.model or (current_user.preferences or {}).get("model"),
         temperature=data.temperature,
         max_steps=data.max_steps
     )

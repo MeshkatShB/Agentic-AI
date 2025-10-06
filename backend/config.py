@@ -1,10 +1,22 @@
 """Application configuration and settings."""
 
-from typing import List, Optional
+from typing import List, Optional, Union, Any
 from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+import os
 
 
-class Settings:
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        # Don't try to parse these fields as JSON from env vars
+        env_parse_enums=False
+    )
+    
     # App
     APP_NAME: str = "Local AI Agent"
     APP_VERSION: str = "1.0.0"
@@ -37,8 +49,10 @@ class Settings:
     MAX_RETRIEVAL_RESULTS: int = 10  # Maximum results to retrieve
     
     # File Access
-    ALLOWED_FILE_PATHS: List[str] = ["./data", "./documents"]
-    BLOCKED_FILE_PATHS: List[str] = ["/etc", "/system32", "/Windows/System32"]
+    # Note: These are Union[str, List[str]] to allow comma-separated values from .env
+    # The validator will convert them to List[str]
+    ALLOWED_FILE_PATHS: Union[str, List[str]] = ["./data", "./documents"]
+    BLOCKED_FILE_PATHS: Union[str, List[str]] = ["/etc", "/system32", "/Windows/System32"]
     MAX_FILE_SIZE_MB: int = 100
     
     # Agent Settings
@@ -56,11 +70,21 @@ class Settings:
     WEB_SEARCH_TIMEOUT: int = 10
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
+    CORS_ORIGINS: Union[str, List[str]] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    @field_validator('ALLOWED_FILE_PATHS', 'BLOCKED_FILE_PATHS', 'CORS_ORIGINS', mode='before')
+    @classmethod
+    def parse_comma_separated(cls, v: Any) -> List[str]:
+        """Parse comma-separated strings from .env file into lists."""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            return [item.strip() for item in v.split(',') if item.strip()]
+        if isinstance(v, list):
+            return v
+        return []
         
     def get_allowed_paths(self) -> List[Path]:
         """Get resolved allowed file paths."""

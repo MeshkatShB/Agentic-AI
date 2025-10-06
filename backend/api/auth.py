@@ -43,8 +43,8 @@ class UserProfile(BaseModel):
     username: str
     email: str
     full_name: Optional[str]
-    preferences: dict
-    allowed_tools: list
+    preferences: Optional[dict] = {}
+    allowed_tools: list = []
     created_at: str
 
 
@@ -159,8 +159,8 @@ async def get_profile(
         username=current_user.username,
         email=current_user.email,
         full_name=current_user.full_name,
-        preferences=current_user.preferences,
-        allowed_tools=current_user.allowed_tools,
+        preferences=current_user.preferences or {},
+        allowed_tools=current_user.allowed_tools or [],
         created_at=current_user.created_at.isoformat()
     )
 
