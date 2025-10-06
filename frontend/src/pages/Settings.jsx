@@ -288,7 +288,11 @@ const Settings = () => {
                     className="input-glass text-white"
                   >
                     {systemInfo?.models_available?.map((model) => (
-                      <option key={model} value={model}>
+                      <option
+                        key={model}
+                        value={model}
+                        className="bg-gray-800 text-white"
+                      >
                         {model}
                       </option>
                     ))}
@@ -310,7 +314,7 @@ const Settings = () => {
                     }
                     className="input-glass text-white"
                   >
-                    <option value="simple">
+                    <option value="simple" className="bg-gray-800 text-white">
                       Simple Agent - Basic responses
                     </option>
                     {/* Reasoning agent removed */}
@@ -337,13 +341,16 @@ const Settings = () => {
                       }
                       className="input-glass text-white"
                     >
-                      <option value="simple">
+                      <option value="simple" className="bg-gray-800 text-white">
                         Simple - Fast, direct responses
                       </option>
-                      <option value="chain_of_thought">
+                      <option
+                        value="chain_of_thought"
+                        className="bg-gray-800 text-white"
+                      >
                         Chain of Thought - Detailed reasoning process
                       </option>
-                      <option value="react">
+                      <option value="react" className="bg-gray-800 text-white">
                         ReAct - Reason and Act iteratively
                       </option>
                     </select>
