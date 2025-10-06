@@ -3,6 +3,7 @@
 from .file_tools import SearchLocalFilesTool, ReadFileTool, ParseDocumentTool
 from .web_tools import WebSearchTool, WebScrapeTool, HttpRequestTool
 from .database_tools import DatabaseQueryTool
+from .api_tools import WeatherAPITool, CustomAPITool
 
 __all__ = [
     "SearchLocalFilesTool",
@@ -11,5 +12,7 @@ __all__ = [
     "WebSearchTool",
     "WebScrapeTool",
     "HttpRequestTool",
-    "DatabaseQueryTool"
+    "DatabaseQueryTool",
+    "WeatherAPITool",
+    "CustomAPITool"
 ]

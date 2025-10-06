@@ -410,13 +410,35 @@ class WebScrapeTool(BaseTool):
         extract_type = kwargs.get("extract_type", "text")
         max_length = kwargs.get("max_length", 5000)
         
+        # Validate URL is provided
+        if not url:
+            return ToolResult(
+                success=False,
+                output=None,
+                error="URL is required for web scraping"
+            )
+        
+        # Ensure URL is a string
+        if not isinstance(url, str):
+            return ToolResult(
+                success=False,
+                output=None,
+                error="URL must be a string"
+            )
+        
         try:
-            # Validate URL
+            # Validate URL format
             if not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
             
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,fa;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
             }
             
             async with aiohttp.ClientSession(headers=headers) as session:
@@ -429,6 +451,8 @@ class WebScrapeTool(BaseTool):
                         )
                     
                     content = await response.text()
+                    logger.debug(f"Scraped content length: {len(content)}")
+                    logger.debug(f"Content preview: {content[:500]}...")
                     
                     from bs4 import BeautifulSoup
                     soup = BeautifulSoup(content, 'html.parser')
@@ -440,21 +464,57 @@ class WebScrapeTool(BaseTool):
                     result = {
                         "url": url,
                         "title": soup.title.string if soup.title else "No title",
-                        "status_code": response.status
+                        "status_code": response.status,
+                        "content_length": len(content)
                     }
                     
                     if extract_type in ["text", "all"]:
-                        # Extract text content
-                        text = soup.get_text()
+                        # Extract text content with improved logic
+                        text = ""
+                        
+                        # Try to find main content areas first
+                        main_selectors = [
+                            'main', 'article', '[role="main"]', 
+                            '.main-content', '.content', '.post-content',
+                            '#main', '#content', '#main-content'
+                        ]
+                        
+                        main_content = None
+                        for selector in main_selectors:
+                            main_content = soup.select_one(selector)
+                            if main_content:
+                                logger.debug(f"Found main content using selector: {selector}")
+                                break
+                        
+                        if main_content:
+                            text = main_content.get_text()
+                        else:
+                            # Fallback to full page text
+                            text = soup.get_text()
+                        
+                        # Clean up the text
                         lines = (line.strip() for line in text.splitlines())
                         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
                         text = ' '.join(chunk for chunk in chunks if chunk)
+                        
+                        logger.debug(f"Extracted text length: {len(text)}")
+                        logger.debug(f"Text preview: {text[:200]}...")
                         
                         if len(text) > max_length:
                             text = text[:max_length] + "... [truncated]"
                         
                         result["text"] = text
                         result["text_length"] = len(text)
+                        
+                        # If we got very little text, provide debugging info
+                        if len(text) < 100:
+                            result["debug_info"] = {
+                                "raw_html_length": len(content),
+                                "soup_text_length": len(soup.get_text()),
+                                "found_main_content": main_content is not None,
+                                "title_found": soup.title is not None,
+                                "body_found": soup.body is not None
+                            }
                     
                     if extract_type in ["links", "all"]:
                         # Extract links

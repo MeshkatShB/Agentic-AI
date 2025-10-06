@@ -156,6 +156,72 @@ class Agent:
                 q_lower = (query or "").strip()
                 if forced_tool in ["search_local_files", "rag_search", "web_search"]:
                     suggested_args["query"] = q_lower
+                elif forced_tool in ["scrape_webpage", "http_request"]:
+                    # Extract URL from query for web/API tools
+                    import re
+                    import json
+                    
+                    # Extract URL (including IP addresses)
+                    url_patterns = [
+                        r'https?://[^\s]+',  # Full URLs
+                        r'(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?::[0-9]{1,5})?(?:/[^\s]*)?',  # IP:port/path
+                        r'www\.[^\s]+',      # www.domain.com
+                        r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?'  # domain.com or domain.com/path
+                    ]
+                    
+                    extracted_url = None
+                    for pattern in url_patterns:
+                        matches = re.findall(pattern, query)  # Use original query
+                        if matches:
+                            extracted_url = matches[0]
+                            break
+                    
+                    if extracted_url:
+                        suggested_args["url"] = extracted_url
+                        
+                        # For http_request, also extract method and JSON body
+                        if forced_tool == "http_request":
+                            # If it's an IP address without http/https, assume HTTP
+                            if not extracted_url.startswith(('http://', 'https://')):
+                                # Check if it's an IP address (more likely to be HTTP)
+                                ip_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)'
+                                if re.match(ip_pattern, extracted_url):
+                                    suggested_args["url"] = f"http://{extracted_url}"
+                            
+                            # Detect HTTP method (default to POST if there's a body)
+                            query_upper = query.upper()
+                            detected_method = None
+                            for method in ["POST", "PUT", "PATCH", "DELETE", "GET"]:
+                                if method in query_upper:
+                                    detected_method = method
+                                    break
+                            
+                            # Try to extract JSON body
+                            json_pattern = r'\{[^{}]*\}'
+                            json_matches = re.findall(json_pattern, query)
+                            if json_matches:
+                                try:
+                                    json_body = json.loads(json_matches[0])
+                                    suggested_args["json"] = json_body
+                                    # If body exists but no method specified, default to POST
+                                    if not detected_method:
+                                        suggested_args["method"] = "POST"
+                                except:
+                                    pass
+                            
+                            # Set the detected method if any
+                            if detected_method:
+                                suggested_args["method"] = detected_method
+                            
+                            # Set appropriate timeout based on request type
+                            # External APIs and POST/PUT requests typically take longer
+                            if any(keyword in query.lower() for keyword in ['external', 'slow', 'wait', 'long', 'خارجی', 'کند']):
+                                suggested_args["timeout"] = 120  # 2 minutes for explicitly external/slow APIs
+                            elif "json" in suggested_args or suggested_args.get("method") in ["POST", "PUT", "PATCH"]:
+                                suggested_args["timeout"] = 60  # 60 seconds for POST/PUT requests with body
+                            else:
+                                suggested_args["timeout"] = 30  # 30 seconds for GET requests
+                
                 tool_selection = (forced_tool, suggested_args)
             else:
                 tool_selection = await self.tool_selector.analyze_query(query, allowed_tools)
@@ -168,6 +234,25 @@ class Agent:
                 q_lower = (query or "").strip()
                 if forced_tool in ["search_local_files", "rag_search", "web_search"]:
                     suggested_args["query"] = q_lower
+                elif forced_tool == "scrape_webpage":
+                    # Extract URL from query for scraping tool
+                    import re
+                    url_patterns = [
+                        r'https?://[^\s]+',  # Full URLs
+                        r'www\.[^\s]+',      # www.domain.com
+                        r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?'  # domain.com or domain.com/path
+                    ]
+                    
+                    extracted_url = None
+                    for pattern in url_patterns:
+                        matches = re.findall(pattern, q_lower)
+                        if matches:
+                            extracted_url = matches[0]
+                            break
+                    
+                    if extracted_url:
+                        suggested_args["url"] = extracted_url
+                        
                 # If we cannot infer required params, fall back to selector/LLM
                 if suggested_args:
                     logger.info(f"Forcing tool '{forced_tool}' with args inferred from query")
@@ -609,62 +694,125 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
         return text
     
     async def _generate_response_from_tool_result(self, tool_result: Any, tool_name: str) -> str:
-        """Generate a natural language response from tool results."""
+        """Generate a natural language response from tool results using LLM reasoning."""
         try:
-            # Simple rule-based response for search tools
-            if tool_name == "search_local_files" and hasattr(tool_result, 'output'):
-                output_data = tool_result.output
-                if isinstance(output_data, dict) and output_data.get('results'):
-                    results = output_data['results']
-                    if results:
-                        response_parts = []
-                        response_parts.append(f"بر اساس جستجو در فایل‌ها، {len(results)} نتیجه پیدا شد:")
-                        
-                        for i, result in enumerate(results[:3], 1):  # Show top 3 results
-                            file_name = result.get('file_name', 'نامشخص')
-                            content = result.get('content', '')
-                            response_parts.append(f"\n{i}. فایل: {file_name}")
-                            response_parts.append(f"   محتوا: {content}")
-                        
-                        return "\n".join(response_parts)
-                    else:
-                        return "متأسفم، هیچ نتیجه‌ای در فایل‌ها پیدا نشد."
+            # Get tool information for context
+            tool = tool_registry.get_tool(tool_name)
+            tool_description = tool.description if tool else f"the {tool_name} tool"
             
-            # Fallback to LLM for other tools
-            prompt = f"""A user asked a question and I used the '{tool_name}' tool to help answer it. 
+            # Prepare the tool result for the LLM
+            if hasattr(tool_result, 'output'):
+                result_data = tool_result.output
+            else:
+                result_data = str(tool_result)
+            
+            # Create a more concise prompt to avoid timeouts
+            prompt = f"""Summarize this tool result for the user and show relevant content:
 
-Tool Result:
-{json.dumps(tool_result.output, indent=2) if hasattr(tool_result, 'output') else str(tool_result)}
+Tool: {tool_name} - {tool_description}
+Result: {json.dumps(result_data, indent=2) if isinstance(result_data, (dict, list)) else str(result_data)[:1000]}
 
-Please provide a clear, helpful response to the user based on these results. Be concise but informative.
-
-- Note: If the User Query is in Persian, the response MUST be in Persian. even if it contains a single persian letter.
-
-"""
+Instructions:
+1. Start with what was accomplished
+2. If there's text content, show a meaningful preview (200-400 characters)
+3. If there are search results, list the top findings
+4. Keep it concise but informative
+5. Always include actual content when available"""
 
             async def _run() -> str:
                 response_text = ""
-                async for chunk in self.llm_client.chat(
-                    model=self.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_tokens=min(self.max_tokens, 400),
-                    stream=False
-                ):
-                    if "message" in chunk and chunk["message"].get("content"):
-                        content = str(chunk["message"]["content"])
-                        if content and content != "None" and content != "undefined":
-                            response_text += content
-                    if chunk.get("done"):
-                        break
+                try:
+                    async for chunk in self.llm_client.chat(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.3,
+                        max_tokens=400,  # Increased to allow for content preview
+                        stream=False
+                    ):
+                        if "message" in chunk and chunk["message"].get("content"):
+                            content = str(chunk["message"]["content"])
+                            if content and content != "None" and content != "undefined":
+                                response_text += content
+                        if chunk.get("done"):
+                            break
+                except Exception as llm_error:
+                    logger.error(f"LLM call failed: {llm_error}")
+                    return ""
                 return response_text
 
-            step_timeout = getattr(settings, "STEP_TIMEOUT_SECONDS", 30)
-            response_text = await asyncio.wait_for(_run(), timeout=step_timeout + 5)
+            # Use shorter timeout for faster fallback
+            step_timeout = min(getattr(settings, "STEP_TIMEOUT_SECONDS", 30), 15)
+            try:
+                response_text = await asyncio.wait_for(_run(), timeout=step_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"LLM response generation timed out for {tool_name}, using fallback")
+                return self._generate_fallback_response(tool_name, result_data)
 
             cleaned_response = self._clean_response_text(response_text)
-            return cleaned_response if cleaned_response else f"I used the {tool_name} tool and got results."
+            
+            # Fallback if LLM doesn't generate a good response
+            if not cleaned_response or len(cleaned_response.strip()) < 10:
+                return self._generate_fallback_response(tool_name, result_data)
+            
+            return cleaned_response
             
         except Exception as e:
-            logger.error(f"Error generating response from tool result: {e}")
-            return f"I successfully used the {tool_name} tool, but encountered an error formatting the response: {str(e)}"
+            logger.error(f"Error generating response from tool result: {e}", exc_info=True)
+            return self._generate_fallback_response(tool_name, result_data if 'result_data' in locals() else None, str(e))
+    
+    def _generate_fallback_response(self, tool_name: str, result_data: Any = None, error: str = None) -> str:
+        """Generate a fallback response when LLM-based generation fails."""
+        if error:
+            return f"I successfully used the {tool_name} tool, but encountered an issue generating the response. The tool executed correctly and returned results."
+        
+        # Enhanced analysis of common result patterns
+        if isinstance(result_data, dict):
+            # Handle scraping tools
+            if 'text_length' in result_data:
+                url = result_data.get('url', 'the target')
+                status = result_data.get('status_code', 'unknown')
+                text_length = result_data.get('text_length', 0)
+                text_content = result_data.get('text', '')
+                
+                if text_length > 0 and text_content:
+                    # Show preview of the actual scraped content
+                    preview_length = min(500, len(text_content))
+                    content_preview = text_content[:preview_length]
+                    
+                    response = f"I successfully scraped {url} (status {status}) and extracted {text_length} characters of text content.\n\n"
+                    response += f"Here's the content:\n\n{content_preview}"
+                    
+                    if len(text_content) > preview_length:
+                        response += f"\n\n... [Content truncated. Total length: {text_length} characters]"
+                    
+                    return response
+                else:
+                    content_length = result_data.get('content_length', 'unknown')
+                    return f"I successfully connected to {url} (status {status}) and received {content_length} characters of HTML, but couldn't extract readable text. This is likely due to JavaScript content loading or anti-bot protection."
+            
+            # Handle search tools
+            elif 'results' in result_data and isinstance(result_data['results'], list):
+                count = len(result_data['results'])
+                results = result_data['results']
+                
+                response = f"I successfully used the {tool_name} tool and found {count} result{'s' if count != 1 else ''}."
+                
+                # Show preview of search results
+                if results and count > 0:
+                    response += "\n\nResults:\n"
+                    for i, result in enumerate(results[:3], 1):  # Show top 3
+                        if isinstance(result, dict):
+                            title = result.get('title', result.get('file_name', f'Result {i}'))
+                            content = result.get('content', result.get('snippet', ''))
+                            response += f"\n{i}. {title}"
+                            if content:
+                                response += f"\n   {content[:200]}{'...' if len(content) > 200 else ''}"
+                
+                return response
+            
+            # Handle HTTP tools
+            elif 'status_code' in result_data:
+                status = result_data.get('status_code', 'unknown')
+                return f"I successfully used the {tool_name} tool and received a response with status {status}."
+        
+        return f"I successfully used the {tool_name} tool and obtained results."

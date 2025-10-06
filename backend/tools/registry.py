@@ -48,7 +48,9 @@ class ToolRegistry:
             WebSearchTool,
             WebScrapeTool,
             HttpRequestTool,
-            DatabaseQueryTool
+            DatabaseQueryTool,
+            WeatherAPITool,
+            CustomAPITool
         )
         from .implementations.advanced_tools import (
             SystemInfoTool,
@@ -68,6 +70,10 @@ class ToolRegistry:
             WebSearchTool,
             WebScrapeTool,
             HttpRequestTool,
+            
+            # API tools
+            WeatherAPITool,
+            CustomAPITool,
             
             # System and analysis tools
             SystemInfoTool,

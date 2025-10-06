@@ -139,6 +139,31 @@ For search tasks, ensure parameters include a non-empty "query" string.
         
         # Simple rule-based fallback when LLM is not available
         query_lower = query.lower()
+        
+        # Handle scraping requests
+        if any(word in query_lower for word in ['scrape', 'اسکرپ', 'extract', 'get content from']):
+            if 'scrape_webpage' in available_tools:
+                # Extract URL from query
+                import re
+                # Look for URLs or domain names in the query
+                url_patterns = [
+                    r'https?://[^\s]+',  # Full URLs
+                    r'www\.[^\s]+',      # www.domain.com
+                    r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?'  # domain.com or domain.com/path
+                ]
+                
+                extracted_url = None
+                for pattern in url_patterns:
+                    matches = re.findall(pattern, query)
+                    if matches:
+                        extracted_url = matches[0]
+                        break
+                
+                if extracted_url:
+                    logger.info(f"Rule-based selection: scrape_webpage with url '{extracted_url}'")
+                    return 'scrape_webpage', {'url': extracted_url}
+        
+        # Handle search requests
         if any(word in query_lower for word in ['فایل', 'file', 'جستجو', 'search', 'پیدا', 'find', 'باگ', 'bug']):
             if 'search_local_files' in available_tools:
                 # Extract search terms from Persian query
@@ -170,12 +195,16 @@ Your task:
 IMPORTANT: 
 - For search tools, extract the actual search terms from the user query
 - If the user asks to search for something, use the search terms as the "query" parameter
+- For scraping tools, extract the URL/domain from the user query
 - For Persian queries, extract the Persian search terms
-- Don't leave the "query" parameter empty - extract meaningful search terms
+- Don't leave required parameters empty - extract meaningful values
 
 Examples:
 - User: "search for bug reports" → query: "bug reports"
 - User: "find documents about performance" → query: "performance"
+- User: "go scrape digikala.com" → url: "digikala.com"
+- User: "scrape https://example.com" → url: "https://example.com"
+- User: "extract content from google.com" → url: "google.com"
 - User: "دستور العمل کنترل عملکرد سرور" → query: "دستور العمل کنترل عملکرد سرور"
 
 Respond with ONLY a JSON object in this exact format:
@@ -184,6 +213,7 @@ Respond with ONLY a JSON object in this exact format:
     "reasoning": "brief explanation of why this tool was selected",
     "suggested_parameters": {{
         "query": "extracted_search_terms",
+        "url": "extracted_url",
         "other_parameter": "value"
     }}
 }}
