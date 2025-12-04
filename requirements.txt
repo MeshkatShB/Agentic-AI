@@ -8,7 +8,7 @@ pydantic-settings==2.12.0
 # Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt==5.0.0
+bcrypt==4.0.1
 python-multipart==0.0.6
 
 # Database
@@ -34,7 +34,7 @@ beautifulsoup4==4.12.2
 
 # Web Search (optional)
 aiohttp==3.9.1
-duckduckgo-search==3.9.6
+duckduckgo-search==8.1.1
 
 # LangChain
 langchain==1.0.8
