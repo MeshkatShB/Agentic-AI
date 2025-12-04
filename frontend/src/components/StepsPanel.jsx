@@ -527,16 +527,48 @@ const StepsPanel = ({ steps = [], historicalSteps = [] }) => {
           ) : (
             renderStepsList(actions, false)
           )
-        ) : thinking.length === 0 ? (
+        ) : activeTab === "thinking" ? (
+          thinking.length === 0 ? (
+            <div className="text-center py-8">
+              <Brain className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400 text-sm">No thinking process yet</p>
+              <p className="text-gray-500 text-xs mt-1">
+                Internal reasoning will appear here
+              </p>
+            </div>
+          ) : (
+            renderStepsList(thinking, true)
+          )
+        ) : // Default "current" tab: show all steps (actions first, then thinking)
+        steps.length === 0 ? (
           <div className="text-center py-8">
-            <Brain className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-            <p className="text-gray-400 text-sm">No thinking process yet</p>
+            <Clock className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+            <p className="text-gray-400 text-sm">No steps yet</p>
             <p className="text-gray-500 text-xs mt-1">
-              Internal reasoning will appear here
+              Agent execution steps will appear here
             </p>
           </div>
         ) : (
-          renderStepsList(thinking, true)
+          <div className="space-y-4">
+            {actions.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center space-x-2">
+                  <Wrench className="w-4 h-4" />
+                  <span>Actions ({actions.length})</span>
+                </h3>
+                {renderStepsList(actions, false)}
+              </div>
+            )}
+            {thinking.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center space-x-2">
+                  <Brain className="w-4 h-4" />
+                  <span>Thinking ({thinking.length})</span>
+                </h3>
+                {renderStepsList(thinking, true)}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
