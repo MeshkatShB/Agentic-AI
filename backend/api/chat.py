@@ -38,6 +38,7 @@ class MessageRequest(BaseModel):
     content: str
     stream: bool = True
     selected_tools: Optional[List[str]] = []
+    use_deepagent: bool = False
 
 
 class MessageResponse(BaseModel):
@@ -250,7 +251,8 @@ async def send_message(
                 message=request.content,
                 db=db,
                 stream=request.stream,
-                selected_tools=request.selected_tools
+                selected_tools=request.selected_tools,
+                use_deepagent=request.use_deepagent
             ):
                 # Format as SSE
                 if request.stream:
