@@ -92,7 +92,12 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  sendMessage: async (conversationId, content, selectedTools = []) => {
+  sendMessage: async (
+    conversationId,
+    content,
+    selectedTools = [],
+    useDeepAgent = false
+  ) => {
     if (!content.trim()) return;
 
     // Create abort controller for this request
@@ -137,6 +142,7 @@ export const useChatStore = create((set, get) => ({
             content,
             stream: true,
             selected_tools: selectedTools,
+            use_deepagent: useDeepAgent,
           }),
           signal: abortController.signal,
         }

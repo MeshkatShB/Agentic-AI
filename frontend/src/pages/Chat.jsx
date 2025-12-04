@@ -50,6 +50,7 @@ const Chat = () => {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState("");
   const [selectedTools, setSelectedTools] = useState([]);
+  const [useDeepAgent, setUseDeepAgent] = useState(false);
 
   // Function to detect RTL text (Persian, Arabic, Hebrew, etc.)
   const isRTL = (text) => {
@@ -105,7 +106,12 @@ const Chat = () => {
     setShouldAutoScroll(true); // Enable auto-scroll when sending a new message
 
     // Send message with selected tools
-    await sendMessage(targetConversation.id, message, selectedTools);
+    await sendMessage(
+      targetConversation.id,
+      message,
+      selectedTools,
+      useDeepAgent
+    );
   };
 
   const handleStop = () => {
@@ -242,6 +248,22 @@ const Chat = () => {
                 </span>
               </div>
             )}
+
+            {/* DeepAgent toggle */}
+            <button
+              onClick={() => setUseDeepAgent(!useDeepAgent)}
+              className={`px-3 py-1.5 rounded-lg transition-all duration-200 ${
+                useDeepAgent
+                  ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                  : "text-gray-400 hover:bg-white/10"
+              }`}
+              title="Use DeepAgent for enhanced reasoning"
+            >
+              <div className="flex items-center space-x-2">
+                <Bot className="w-4 h-4" />
+                <span className="text-sm">DeepAgent</span>
+              </div>
+            </button>
 
             {/* Steps toggle */}
             <button
