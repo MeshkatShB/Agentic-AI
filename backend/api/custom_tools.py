@@ -170,7 +170,7 @@ async def update_custom_tool(
         )
     
     # Update fields
-    update_data = tool_data.dict(exclude_unset=True)
+    update_data = tool_data.model_dump(exclude_unset=True)
     
     if "permission_level" in update_data:
         valid_permissions = ["safe", "read_files", "write_files", "network", "database_read", "database_write", "system"]

@@ -65,7 +65,7 @@ async def update_user_settings(
     """Update user settings."""
     
     # Update preferences
-    current_user.preferences = settings.dict()
+    current_user.preferences = settings.model_dump()
     db.commit()
     
     # Clear agent to apply new settings
