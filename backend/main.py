@@ -9,16 +9,59 @@ from typing import List, Optional
 import json
 import asyncio
 import time
+import logging
+from pathlib import Path
 
 from backend.config import settings
+
+# Create logs directory if it doesn't exist
+logs_dir = Path('logs')
+logs_dir.mkdir(exist_ok=True)
+
+# Configure logging
+handlers = [
+    logging.StreamHandler(),  # Console output
+    logging.FileHandler('logs/app.log', encoding='utf-8', mode='a')  # File output
+]
+
+logging.basicConfig(
+    level=logging.DEBUG if settings.DEBUG else logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=handlers
+)
+
+# Set log levels for specific modules
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+# Suppress ChromaDB telemetry errors
+logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
+# Suppress cryptography deprecation warnings
+logging.getLogger("pypdf._crypt_providers._cryptography").setLevel(logging.ERROR)
+# Suppress passlib/bcrypt version warning
+logging.getLogger("passlib.handlers.bcrypt").setLevel(logging.ERROR)
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="cryptography")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pypdf")
+
+logger = logging.getLogger(__name__)
 from backend.models import Base, engine, get_db, User, Conversation, Message
 from backend.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
-from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router
+from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+
+# Run migrations
+try:
+    from backend.migrations.add_file_attachments_column import migrate as migrate_file_attachments
+    migrate_file_attachments()
+except Exception as e:
+    logger.warning(f"Migration check failed (this is OK if column already exists): {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -42,6 +85,7 @@ app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(tools_router, prefix="/api/tools", tags=["Tools"])
 app.include_router(custom_tools_router, prefix="/api/custom-tools", tags=["Custom Tools"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
+app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
 
 
 @app.get("/health")
@@ -139,11 +183,11 @@ async def startup_event():
     await vector_store.initialize()
     
     # Log startup
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} started")
     logger.info(f"Using model: {settings.DEFAULT_MODEL}")
     logger.info(f"Vector store: {settings.VECTOR_STORE}")
+    logger.info(f"Logging level: {'DEBUG' if settings.DEBUG else 'INFO'}")
+    logger.info("Logs are being written to console and logs/app.log")
 
 
 @app.on_event("shutdown")
