@@ -3,6 +3,7 @@
 from typing import Dict, Optional, AsyncGenerator
 import asyncio
 from backend.agent.agent import Agent, AgentResponse
+from backend.agent.deepagent import DeepAgentWrapper
 from backend.tools import tool_registry
 from backend.models import User, Conversation, Message, AgentStep
 from backend.config import settings
@@ -24,26 +25,44 @@ class AgentExecutor:
     def get_agent_for_user(
         self,
         user: User,
-        conversation_id: int
+        conversation_id: int,
+        use_deepagent: bool = False
     ) -> Agent:
         """Get or create agent for user."""
         
-        if user.id not in self.active_agents:
+        agent_key = f"{user.id}_{'deepagent' if use_deepagent else 'langchain'}"
+        
+        if agent_key not in self.active_agents:
             # Create new agent with user preferences
             preferences = user.preferences or {}
-            kwargs = dict(
-                model=preferences.get("model", settings.DEFAULT_MODEL),
-                temperature=preferences.get("temperature", settings.MODEL_TEMPERATURE),
-                max_steps=preferences.get("max_steps", settings.MAX_STEPS_PER_REQUEST),
-                max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP)
-            )
-            # Always use the base Agent (ReasoningAgent removed)
-            agent = Agent(**kwargs)
+            model = preferences.get("model", settings.DEFAULT_MODEL)
             
-            self.active_agents[user.id] = agent
-            self.execution_locks[user.id] = asyncio.Lock()
+            if use_deepagent:
+                try:
+                    from backend.agent.deepagent import DeepAgentWrapper, DEEPAGENTS_AVAILABLE
+                    if not DEEPAGENTS_AVAILABLE:
+                        raise ImportError("DeepAgents package is not installed")
+                    agent = DeepAgentWrapper(model=model)
+                except (ImportError, Exception) as e:
+                    logger.warning(f"DeepAgent not available ({str(e)}), falling back to LangChain agent")
+                    agent = Agent(
+                        model=model,
+                        temperature=preferences.get("temperature", settings.MODEL_TEMPERATURE),
+                        max_steps=preferences.get("max_steps", settings.MAX_STEPS_PER_REQUEST),
+                        max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP)
+                    )
+            else:
+                agent = Agent(
+                    model=model,
+                    temperature=preferences.get("temperature", settings.MODEL_TEMPERATURE),
+                    max_steps=preferences.get("max_steps", settings.MAX_STEPS_PER_REQUEST),
+                    max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP)
+                )
+            
+            self.active_agents[agent_key] = agent
+            self.execution_locks[agent_key] = asyncio.Lock()
         
-        return self.active_agents[user.id]
+        return self.active_agents[agent_key]
     
     async def execute(
         self,
@@ -52,7 +71,9 @@ class AgentExecutor:
         message: str,
         db: Session,
         stream: bool = True,
-        selected_tools: Optional[list] = None
+        selected_tools: Optional[list] = None,
+        use_deepagent: bool = False,
+        file_attachments: Optional[list] = None
     ) -> AsyncGenerator[Dict, None]:
         """Execute agent for user message."""
         
@@ -61,18 +82,20 @@ class AgentExecutor:
         self.cancellation_tokens[user.id] = cancellation_token
         
         # Get agent and lock
-        agent = self.get_agent_for_user(user, conversation_id)
+        agent = self.get_agent_for_user(user, conversation_id, use_deepagent=use_deepagent)
         
-        if user.id not in self.execution_locks:
-            self.execution_locks[user.id] = asyncio.Lock()
+        agent_key = f"{user.id}_{'deepagent' if use_deepagent else 'langchain'}"
+        if agent_key not in self.execution_locks:
+            self.execution_locks[agent_key] = asyncio.Lock()
         
-        async with self.execution_locks[user.id]:
+        async with self.execution_locks[agent_key]:
             try:
-                # Save user message
+                # Save user message with file attachments
                 user_msg = Message(
                     conversation_id=conversation_id,
                     role="user",
-                    content=message
+                    content=message,
+                    file_attachments=file_attachments if file_attachments else None
                 )
                 db.add(user_msg)
                 db.commit()
@@ -94,13 +117,23 @@ class AgentExecutor:
                     tools_to_use = user.allowed_tools or []
                     logger.info(f"UI provided no selection; using allowed_tools: {tools_to_use}")
                 
-                # Run agent
+                # Retrieve conversation history (previous messages)
+                previous_messages = db.query(Message).filter(
+                    Message.conversation_id == conversation_id
+                ).order_by(Message.created_at).all()
+                
+                # Filter out the current message we just added (it will be added again in agent.run)
+                history_messages = [msg for msg in previous_messages if msg.id != user_msg.id]
+                logger.info(f"Retrieved {len(history_messages)} previous messages from conversation {conversation_id}")
+                
+                # Run agent with message history
                 async for event in agent.run(
                     query=message,
                     conversation_id=conversation_id,
                     user_id=user.id,
                     allowed_tools=tools_to_use,
-                    stream=stream
+                    stream=stream,
+                    message_history=history_messages
                 ):
                     # Check for cancellation before processing each event
                     if cancellation_token.is_set():

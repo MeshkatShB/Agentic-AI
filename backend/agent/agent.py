@@ -1,18 +1,24 @@
-"""AI Agent implementation with automatic tool selection."""
+"""AI Agent implementation using LangChain v1 create_agent with middleware support."""
 
 from typing import List, Dict, Optional, Any, AsyncGenerator
 from pydantic import BaseModel, Field
 from datetime import datetime
 import json
 import asyncio
+import logging
+import re
 
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 
-from backend.llm import OllamaClient, ModelAdapterFactory
-from backend.tools import tool_registry, ToolPermission
+from backend.agent.langchain_tools import LangChainToolAdapter
+from backend.agent.langchain_model import OllamaChatModel
+from backend.tools import tool_registry
 from backend.storage import get_vector_store
 from backend.config import settings
-from backend.agent.tool_selector import ToolSelector
-import logging
+
+logger = logging.getLogger(__name__)
 
 
 def serialize_datetime(obj):
@@ -26,7 +32,42 @@ def serialize_datetime(obj):
     else:
         return obj
 
-logger = logging.getLogger(__name__)
+
+def extract_reasoning_content(content: str) -> str:
+    """Extract content from <think> tags."""
+    if not content:
+        return ""
+    
+    # Extract reasoning content from tags (support both <think> and <think>)
+    matches = re.findall(r'<(?:think|redacted_reasoning)>(.*?)</(?:think|redacted_reasoning)>', content, flags=re.DOTALL | re.IGNORECASE)
+    if matches:
+        return " ".join(matches).strip()
+    
+    # Handle unclosed tags
+    match = re.search(r'<(?:think|redacted_reasoning)>(.*?)(?=</(?:think|redacted_reasoning)>|$)', content, flags=re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    
+    return ""
+
+
+def strip_reasoning_tags(content: str) -> str:
+    """Remove <think> or <think> tags from content for chat display."""
+    if not content:
+        return content
+    
+    # Remove <think>...</think> or <think>...</think> tags and their content
+    content = re.sub(r'<(?:think|redacted_reasoning)>.*?</(?:think|redacted_reasoning)>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Also handle unclosed tags or variations
+    content = re.sub(r'<(?:think|redacted_reasoning)>.*?$', '', content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r'^.*?</(?:think|redacted_reasoning)>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)  # Multiple newlines to double
+    content = content.strip()
+    
+    return content
 
 
 class AgentStep(BaseModel):
@@ -41,14 +82,17 @@ class AgentStep(BaseModel):
     reasoning: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-    def dict(self, *args, **kwargs):
-        """Override dict to handle datetime serialization."""
-        d = super().dict(*args, **kwargs)
-        # Handle datetime serialization for any datetime fields
+    def model_dump(self, *args, **kwargs):
+        """Override model_dump to handle datetime serialization."""
+        d = super().model_dump(*args, **kwargs)
         for key, value in d.items():
             if isinstance(value, datetime):
                 d[key] = value.isoformat()
         return d
+    
+    def dict(self, *args, **kwargs):
+        """Backward compatibility alias for model_dump."""
+        return self.model_dump(*args, **kwargs)
 
 
 class AgentResponse(BaseModel):
@@ -56,30 +100,29 @@ class AgentResponse(BaseModel):
     conversation_id: int
     user_id: int
     query: str
-    final_answer: str
     steps: List[AgentStep]
+    final_answer: str
     total_tokens: int
     execution_time: float
     success: bool
-    error: Optional[str] = None
-
-    def dict(self, *args, **kwargs):
-        """Override dict to handle datetime serialization in steps."""
-        d = super().dict(*args, **kwargs)
-        if "steps" in d:
-            d["steps"] = [
-                step.dict(*args, **kwargs) if isinstance(step, AgentStep) else step
-                for step in d["steps"]
-            ]
-        # Handle datetime serialization for any datetime fields
+    
+    def model_dump(self, *args, **kwargs):
+        """Override model_dump to handle datetime serialization."""
+        d = super().model_dump(*args, **kwargs)
         for key, value in d.items():
             if isinstance(value, datetime):
                 d[key] = value.isoformat()
+            elif isinstance(value, list):
+                d[key] = [serialize_datetime(item) if isinstance(item, dict) else item for item in value]
         return d
+    
+    def dict(self, *args, **kwargs):
+        """Backward compatibility alias for model_dump."""
+        return self.model_dump(*args, **kwargs)
 
 
 class Agent:
-    """AI Agent with automatic tool selection."""
+    """AI Agent using LangChain v1 create_agent with middleware support."""
     
     def __init__(
         self,
@@ -95,15 +138,57 @@ class Agent:
         self.max_tokens = max_tokens
         
         # Initialize components
-        self.llm_client = OllamaClient()
-        self.model_adapter = ModelAdapterFactory.get_adapter(self.model)
         self.vector_store = get_vector_store()
-        self.tool_selector = ToolSelector()
+        
+        # LangChain model
+        self.langchain_model = OllamaChatModel(
+            model_name=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            base_url=settings.OLLAMA_BASE_URL
+        )
+        
+        # Agent instance (will be created with tools)
+        self.agent = None
         
         # Track execution state
         self.steps: List[AgentStep] = []
         self.total_tokens = 0
         self.current_step = 0
+    
+    def _get_system_prompt(self) -> str:
+        """Get system prompt for the agent."""
+        return """You are a helpful AI Agent. Your job is to help users by using tools when needed.
+
+IMPORTANT RULES:
+1. When a user asks you to search, find, or get information, you MUST use a tool immediately. Don't just think about it - DO IT!
+
+2. ALWAYS generate a final answer after using tools, even if the tool returns empty results or no matches. You must:
+   - Acknowledge that you searched/checked
+   - Explain what you found (or didn't find)
+   - Provide a helpful response based on the tool results
+   - If results are empty, say something like "I searched through the files but didn't find any matches for your query" or "No files matched your search criteria"
+
+3. Never leave the user without a response after tool execution. Always provide a clear, helpful answer.
+
+4. Use tools when appropriate to answer user questions
+5. Be concise and accurate in your responses
+
+6. Always provide helpful and accurate information"""
+    
+    def _create_agent(self, tools: List, middleware: Optional[List] = None):
+        """Create LangChain agent with tools and optional middleware."""
+        # Build middleware list
+        middleware_list = middleware or []
+        
+        # Create agent with tools and middleware
+        self.agent = create_agent(
+            model=self.langchain_model,
+            tools=tools,
+            system_prompt=self._get_system_prompt(),
+            middleware=middleware_list
+        )
+        logger.info(f"Agent created with {len(tools)} tools and {len(middleware_list)} middleware")
     
     async def run(
         self,
@@ -111,172 +196,64 @@ class Agent:
         conversation_id: int,
         user_id: int,
         allowed_tools: List[str],
-        stream: bool = True
+        stream: bool = True,
+        message_history: Optional[List] = None
     ) -> AsyncGenerator[Dict, None]:
-        """Run the agent with a query."""
+        """Run the agent with a query and optional message history."""
         
         start_time = datetime.utcnow()
         self.steps = []
         self.current_step = 0
-        self._current_query = query  # Store query for forced tool calls
+        self.total_tokens = 0
         
         try:
-            # Step 1: If multiple tools are available, build a multi-step plan; otherwise single-tool logic
-            planned_steps: List[Dict[str, Any]] = []
-            if allowed_tools and len(allowed_tools) > 1:
-                plan = await self.tool_selector.plan_tools(query, allowed_tools)
-                if plan:
-                    # Execute each planned tool step-by-step
-                    for tool_name, suggested_args in plan:
-                        async for result in self._execute_selected_tool(tool_name, suggested_args, stream):
-                            yield result
-                    # After running plan, produce final answer
-                    end_time = datetime.utcnow()
-                    final_answer = self._get_final_answer()
-                    response_dict = {
-                        "type": "complete",
-                        "response": AgentResponse(
-                            conversation_id=conversation_id,
-                            user_id=user_id,
-                            query=query,
-                            steps=self.steps,
-                            final_answer=final_answer,
-                            total_tokens=self.total_tokens,
-                            execution_time=(end_time - start_time).total_seconds(),
-                            success=True,
-                        ).dict(),
-                    }
-                    yield serialize_datetime(response_dict)
-                    return
-
-            # Fallback single-tool selection
-            if allowed_tools and len(allowed_tools) == 1:
-                forced_tool = allowed_tools[0]
-                suggested_args: Dict[str, Any] = {}
-                q_lower = (query or "").strip()
-                if forced_tool in ["search_local_files", "rag_search", "web_search"]:
-                    suggested_args["query"] = q_lower
-                elif forced_tool in ["scrape_webpage", "http_request"]:
-                    # Extract URL from query for web/API tools
-                    import re
-                    import json
-                    
-                    # Extract URL (including IP addresses)
-                    url_patterns = [
-                        r'https?://[^\s]+',  # Full URLs
-                        r'(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?::[0-9]{1,5})?(?:/[^\s]*)?',  # IP:port/path
-                        r'www\.[^\s]+',      # www.domain.com
-                        r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?'  # domain.com or domain.com/path
-                    ]
-                    
-                    extracted_url = None
-                    for pattern in url_patterns:
-                        matches = re.findall(pattern, query)  # Use original query
-                        if matches:
-                            extracted_url = matches[0]
-                            break
-                    
-                    if extracted_url:
-                        suggested_args["url"] = extracted_url
-                        
-                        # For http_request, also extract method and JSON body
-                        if forced_tool == "http_request":
-                            # If it's an IP address without http/https, assume HTTP
-                            if not extracted_url.startswith(('http://', 'https://')):
-                                # Check if it's an IP address (more likely to be HTTP)
-                                ip_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)'
-                                if re.match(ip_pattern, extracted_url):
-                                    suggested_args["url"] = f"http://{extracted_url}"
-                            
-                            # Detect HTTP method (default to POST if there's a body)
-                            query_upper = query.upper()
-                            detected_method = None
-                            for method in ["POST", "PUT", "PATCH", "DELETE", "GET"]:
-                                if method in query_upper:
-                                    detected_method = method
-                                    break
-                            
-                            # Try to extract JSON body
-                            json_pattern = r'\{[^{}]*\}'
-                            json_matches = re.findall(json_pattern, query)
-                            if json_matches:
-                                try:
-                                    json_body = json.loads(json_matches[0])
-                                    suggested_args["json"] = json_body
-                                    # If body exists but no method specified, default to POST
-                                    if not detected_method:
-                                        suggested_args["method"] = "POST"
-                                except:
-                                    pass
-                            
-                            # Set the detected method if any
-                            if detected_method:
-                                suggested_args["method"] = detected_method
-                            
-                            # Set appropriate timeout based on request type
-                            # External APIs and POST/PUT requests typically take longer
-                            if any(keyword in query.lower() for keyword in ['external', 'slow', 'wait', 'long', 'خارجی', 'کند']):
-                                suggested_args["timeout"] = 120  # 2 minutes for explicitly external/slow APIs
-                            elif "json" in suggested_args or suggested_args.get("method") in ["POST", "PUT", "PATCH"]:
-                                suggested_args["timeout"] = 60  # 60 seconds for POST/PUT requests with body
-                            else:
-                                suggested_args["timeout"] = 30  # 30 seconds for GET requests
+            # Convert tools to LangChain format with user context
+            langchain_tools = LangChainToolAdapter.convert_tools_for_user(allowed_tools, user_id=user_id)
+            logger.info(f"Converted {len(langchain_tools)} tools for agent: {[t.name for t in langchain_tools]}")
+            
+            # Create agent with tools (no middleware for now, can be added later)
+            self._create_agent(langchain_tools)
+            
+            # Build message history from previous messages
+            messages = []
+            if message_history:
+                for msg in message_history:
+                    if msg.role == "user":
+                        messages.append(HumanMessage(content=msg.content))
+                    elif msg.role == "assistant":
+                        ai_msg = AIMessage(content=msg.content or "")
+                        messages.append(ai_msg)
+                    elif msg.role == "system":
+                        messages.append(SystemMessage(content=msg.content))
+                    elif msg.role == "tool" and msg.tool_name:
+                        # Reconstruct tool message
+                        tool_msg = ToolMessage(
+                            content=str(msg.tool_output) if msg.tool_output else msg.content,
+                            tool_call_id=msg.tool_name
+                        )
+                        messages.append(tool_msg)
                 
-                tool_selection = (forced_tool, suggested_args)
+                logger.info(f"Loaded {len(messages)} messages from conversation history")
+            
+            # Add current query
+            messages.append(HumanMessage(content=query))
+            
+            # Prepare initial state with full message history
+            initial_state = {
+                "messages": messages
+            }
+            logger.info(f"Initial state prepared with {len(messages)} total messages (including current query)")
+            
+            # Stream agent execution
+            if stream:
+                async for chunk in self._stream_agent_execution(initial_state, query, conversation_id, user_id, start_time):
+                    yield chunk
             else:
-                tool_selection = await self.tool_selector.analyze_query(query, allowed_tools)
-            
-            # If a tool was explicitly selected in the UI but the selector returned None,
-            # force using the first selected tool with sensible default arguments.
-            if not tool_selection and allowed_tools:
-                forced_tool = allowed_tools[0]
-                suggested_args: Dict[str, Any] = {}
-                q_lower = (query or "").strip()
-                if forced_tool in ["search_local_files", "rag_search", "web_search"]:
-                    suggested_args["query"] = q_lower
-                elif forced_tool == "scrape_webpage":
-                    # Extract URL from query for scraping tool
-                    import re
-                    url_patterns = [
-                        r'https?://[^\s]+',  # Full URLs
-                        r'www\.[^\s]+',      # www.domain.com
-                        r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?'  # domain.com or domain.com/path
-                    ]
-                    
-                    extracted_url = None
-                    for pattern in url_patterns:
-                        matches = re.findall(pattern, q_lower)
-                        if matches:
-                            extracted_url = matches[0]
-                            break
-                    
-                    if extracted_url:
-                        suggested_args["url"] = extracted_url
-                        
-                # If we cannot infer required params, fall back to selector/LLM
-                if suggested_args:
-                    logger.info(f"Forcing tool '{forced_tool}' with args inferred from query")
-                    tool_selection = (forced_tool, suggested_args)
-            
-            if not tool_selection:
-                # No tool selected or forced, provide a direct response
-                direct_response = await self._generate_direct_response(query)
+                # Non-streaming execution
+                result = await self.agent.ainvoke(initial_state)
+                final_answer = self._extract_final_answer(result)
                 
-                step = AgentStep(
-                    step_number=1,
-                    step_type="answer",
-                    content=direct_response,
-                    reasoning="No specific tool required for this query"
-                )
-                self.steps.append(step)
-                
-                if stream:
-                    yield {
-                        "type": "step",
-                        "step": serialize_datetime(step.dict())
-                    }
-                
-                # Create final response
+                # Create response
                 end_time = datetime.utcnow()
                 response_dict = {
                     "type": "complete",
@@ -285,32 +262,476 @@ class Agent:
                         user_id=user_id,
                         query=query,
                         steps=self.steps,
-                        final_answer=direct_response,
+                        final_answer=final_answer,
                         total_tokens=self.total_tokens,
                         execution_time=(end_time - start_time).total_seconds(),
-                        success=True
-                    ).dict()
+                        success=True,
+                    ).model_dump(),
                 }
-                
                 yield serialize_datetime(response_dict)
-                return
+        
+        except Exception as e:
+            logger.error(f"Agent execution error: {e}", exc_info=True)
+            yield {
+                "type": "error",
+                "error": str(e)
+            }
+    
+    async def _stream_agent_execution(
+        self, 
+        initial_state: Dict, 
+        query: str,
+        conversation_id: int,
+        user_id: int,
+        start_time: datetime
+    ) -> AsyncGenerator[Dict, None]:
+        """Stream agent execution and track tool calls/results."""
+        
+        step_number = 1
+        accumulated_content = ""
+        accumulated_reasoning = ""
+        seen_messages = set()  # Track processed messages to avoid duplicates
+        reasoning_prefix_sent = False  # Track if we've sent the reasoning prefix
+        
+        try:
+            logger.info(f"Starting agent stream execution for query: {query[:100]}")
             
-            # Step 2: Execute the selected tool
-            selected_tool, suggested_args = tool_selection
+            # Use astream_events to get token-level streaming
+            chunk_count = 0
+            all_messages = []  # Collect all messages from chunks
+            has_seen_tool_result = False  # Track if we've seen tool results
+            current_ai_content = ""  # Track current AI message content as it streams
+            current_reasoning = ""  # Track current reasoning content as it streams
             
-            # Ensure query parameter is present for search tools
-            if selected_tool in ["search_local_files", "rag_search"] and "query" not in suggested_args:
-                # Extract search terms from the original query as fallback
-                suggested_args["query"] = query.strip()
-                logger.info(f"Added fallback query parameter: {suggested_args['query']}")
+            # Use astream to get incremental state updates
+            async for chunk in self.agent.astream(initial_state):
+                chunk_count += 1
+                logger.info(f"Chunk #{chunk_count}: {type(chunk)}, keys: {chunk.keys() if isinstance(chunk, dict) else 'not a dict'}")
+                logger.debug(f"Chunk content: {chunk}")
+                
+                # Handle different chunk formats
+                if isinstance(chunk, dict):
+                    # Check for messages in various possible keys
+                    if "messages" in chunk:
+                        messages = chunk["messages"]
+                        all_messages.extend(messages)
+                    elif "model" in chunk:
+                        # This might be a model response chunk
+                        logger.debug(f"Model chunk: {chunk.get('model')}")
+                    # Some chunks might be the messages themselves
+                    elif any(isinstance(v, (list, tuple)) for v in chunk.values()):
+                        for key, value in chunk.items():
+                            if isinstance(value, (list, tuple)) and value:
+                                if isinstance(value[0], (AIMessage, HumanMessage, ToolMessage, SystemMessage)):
+                                    all_messages.extend(value)
+                                    logger.info(f"Found messages in chunk key '{key}': {len(value)} messages")
             
-            async for result in self._execute_selected_tool(selected_tool, suggested_args, stream):
-                yield result
+            # Process all collected messages
+            logger.info(f"Total messages collected: {len(all_messages)}")
+            for msg in all_messages:
+                # Create a unique identifier for the message
+                msg_id = id(msg)
+                if msg_id in seen_messages:
+                    continue
+                seen_messages.add(msg_id)
+                
+                logger.info(f"Processing message: {type(msg).__name__}, content preview: {str(getattr(msg, 'content', ''))[:100]}")
+                
+                # Handle AIMessage with tool calls
+                if isinstance(msg, AIMessage):
+                                # Check for tool calls
+                                tool_calls = getattr(msg, 'tool_calls', None) or []
+                                
+                                if tool_calls:
+                                    logger.info(f"Detected {len(tool_calls)} tool call(s)")
+                                    for tool_call in tool_calls:
+                                        # Extract tool call info
+                                        if isinstance(tool_call, dict):
+                                            tool_name = tool_call.get("name", "")
+                                            tool_args = tool_call.get("args", {})
+                                            tool_call_id = tool_call.get("id", "")
+                                        else:
+                                            tool_name = getattr(tool_call, "name", "")
+                                            tool_args = getattr(tool_call, "args", {})
+                                            tool_call_id = getattr(tool_call, "id", "")
+                                        
+                                        logger.info(f"Tool call: {tool_name} with args: {tool_args}")
+                                        
+                                        # Create tool request step
+                                        request_step = AgentStep(
+                                            step_number=step_number,
+                                            step_type="tool_request",
+                                            content=f"Calling {tool_name}",
+                                            tool_name=tool_name,
+                                            tool_input=tool_args,
+                                            reasoning=f"Agent decided to use {tool_name} tool"
+                                        )
+                                        self.steps.append(request_step)
+                                        step_number += 1
+                                        
+                                        yield {
+                                            "type": "step",
+                                            "step": serialize_datetime(request_step.model_dump())
+                                        }
+                                
+                                # Stream AI message content incrementally
+                                # Only stream to chat if:
+                                # 1. No tool calls (direct answer), OR
+                                # 2. Has tool calls but we've seen tool results (this is the final answer after processing tool results)
+                                if msg.content:
+                                    content = str(msg.content)
+                                    if content and content.strip() and content != "None":
+                                        # Determine if this is a final answer or just thinking
+                                        is_final_answer = not tool_calls or (tool_calls and has_seen_tool_result)
+                                        
+                                        # Process content incrementally to extract reasoning
+                                        if content != previous_ai_content:
+                                            # Get the new part of the content
+                                            new_part = content[len(previous_ai_content):] if previous_ai_content and content.startswith(previous_ai_content) else content
+                                            
+                                            # Extract reasoning from the new part
+                                            if new_part:
+                                                # Check if we're in a reasoning tag
+                                                temp_full_content = content
+                                                reasoning_matches = re.findall(r'<(?:think|redacted_reasoning)>(.*?)(?=</(?:think|redacted_reasoning)>|$)', temp_full_content, flags=re.DOTALL | re.IGNORECASE)
+                                                if reasoning_matches:
+                                                    # We have reasoning content
+                                                    current_reasoning = reasoning_matches[-1]
+                                                    if current_reasoning and current_reasoning != accumulated_reasoning:
+                                                        # New reasoning content to stream
+                                                        new_reasoning = current_reasoning[len(accumulated_reasoning):] if accumulated_reasoning else current_reasoning
+                                                        if new_reasoning:
+                                                            if not reasoning_prefix_sent:
+                                                                # Send prefix first
+                                                                yield {
+                                                                    "type": "reasoning",
+                                                                    "token": "AI is thinking about...: "
+                                                                }
+                                                                reasoning_prefix_sent = True
+                                                            # Stream reasoning token by token
+                                                            for char in new_reasoning:
+                                                                yield {
+                                                                    "type": "reasoning",
+                                                                    "token": char
+                                                                }
+                                                            accumulated_reasoning = current_reasoning
+                                                
+                                                # Stream final answer (non-reasoning content) if it's a final answer
+                                                if is_final_answer:
+                                                    content_for_chat = strip_reasoning_tags(content)
+                                                    if content_for_chat != accumulated_content:
+                                                        new_content = content_for_chat[len(accumulated_content):] if accumulated_content and content_for_chat.startswith(accumulated_content) else content_for_chat
+                                                        if new_content:
+                                                            # Reset reasoning prefix when we start streaming answer
+                                                            if reasoning_prefix_sent:
+                                                                reasoning_prefix_sent = False
+                                                            # Stream answer token by token
+                                                            for char in new_content:
+                                                                yield {
+                                                                    "type": "token",
+                                                                    "token": char
+                                                                }
+                                                            accumulated_content = content_for_chat
+                                            
+                                            previous_ai_content = content
+                                        
+                                        if is_final_answer:
+                                            
+                                            # Create answer step for final response
+                                            # Keep full content (with reasoning) in steps for agent process
+                                            step = AgentStep(
+                                                step_number=step_number,
+                                                step_type="answer",
+                                                content=content,  # Full content with reasoning for agent process
+                                                reasoning="Agent final answer" if has_seen_tool_result else "Agent response"
+                                            )
+                                            self.steps.append(step)
+                                            step_number += 1
+                                            
+                                            yield {
+                                                "type": "step",
+                                                "step": serialize_datetime(step.model_dump())
+                                            }
+                                            
+                                            # Reset flag after final answer
+                                            has_seen_tool_result = False
+                                        else:
+                                            # This is thinking/planning (has tool calls but no tool results yet)
+                                            # Don't stream to chat, but create a thinking step for agent process
+                                            step = AgentStep(
+                                                step_number=step_number,
+                                                step_type="thinking",
+                                                content=content,  # Full thinking content for agent process
+                                                reasoning="Agent thinking process"
+                                            )
+                                            self.steps.append(step)
+                                            step_number += 1
+                                            
+                                            yield {
+                                                "type": "step",
+                                                "step": serialize_datetime(step.model_dump())
+                                            }
+                
+                # Handle ToolMessage (tool results)
+                elif isinstance(msg, ToolMessage):
+                                tool_result = str(msg.content)
+                                tool_call_id = getattr(msg, "tool_call_id", "")
+                                
+                                logger.info(f"Tool result received (call_id: {tool_call_id}): {tool_result[:200]}...")
+                                
+                                # Mark that we've seen a tool result - next AI message should be final answer
+                                has_seen_tool_result = True
+                                
+                                # Find corresponding tool request by matching tool_call_id
+                                tool_name = None
+                                tool_input = None
+                                for step in reversed(self.steps):
+                                    if step.step_type == "tool_request":
+                                        tool_name = step.tool_name
+                                        tool_input = step.tool_input
+                                        break
+                                
+                                # Create tool result step
+                                result_step = AgentStep(
+                                    step_number=step_number,
+                                    step_type="tool_result",
+                                    content=tool_result,
+                                    tool_name=tool_name,
+                                    tool_input=tool_input,
+                                    tool_output={"result": tool_result},
+                                    reasoning="Tool execution completed"
+                                )
+                                self.steps.append(result_step)
+                                step_number += 1
+                                
+                                yield {
+                                    "type": "step",
+                                    "step": serialize_datetime(result_step.model_dump())
+                                }
+            
+            # After streaming, get final state to extract any missed tool results
+            logger.info(f"Streaming completed. Processing final state for missed tool results...")
+            try:
+                final_state = await self.agent.ainvoke(initial_state)
+                logger.info(f"Final state keys: {final_state.keys() if isinstance(final_state, dict) else 'not a dict'}")
+                
+                # Process final state messages to extract tool results we might have missed
+                if isinstance(final_state, dict) and "messages" in final_state:
+                    final_messages = final_state["messages"]
+                    logger.info(f"Final state has {len(final_messages)} messages")
+                    
+                    # Log all message types for debugging
+                    for i, msg in enumerate(final_messages):
+                        msg_type = type(msg).__name__
+                        has_content = bool(getattr(msg, 'content', None))
+                        has_tool_calls = bool(getattr(msg, 'tool_calls', None))
+                        logger.info(f"Message {i+1}: {msg_type}, has_content={has_content}, has_tool_calls={has_tool_calls}")
+                        
+                        if isinstance(msg, AIMessage):
+                            content_preview = str(msg.content)[:200] if msg.content else 'None'
+                            tool_calls_info = msg.tool_calls if hasattr(msg, 'tool_calls') and msg.tool_calls else 'None'
+                            logger.info(f"  AIMessage content preview: {content_preview}")
+                            logger.info(f"  AIMessage tool_calls: {tool_calls_info}")
+                        elif isinstance(msg, ToolMessage):
+                            content_preview = str(msg.content)[:200] if msg.content else 'None'
+                            tool_call_id = getattr(msg, 'tool_call_id', 'None')
+                            logger.info(f"  ToolMessage content preview: {content_preview}")
+                            logger.info(f"  ToolMessage tool_call_id: {tool_call_id}")
+                    
+                    # Process messages in order - first check for tool calls, then tool results
+                    for msg in final_messages:
+                        msg_id = id(msg)
+                        if msg_id in seen_messages:
+                            logger.debug(f"Skipping already seen message: {type(msg).__name__}")
+                            continue
+                        seen_messages.add(msg_id)
+                        
+                        # Check for AIMessage with tool calls first
+                        if isinstance(msg, AIMessage):
+                            tool_calls = getattr(msg, 'tool_calls', None) or []
+                            
+                            if tool_calls:
+                                logger.info(f"Found {len(tool_calls)} tool call(s) in final state")
+                                for tool_call in tool_calls:
+                                    if isinstance(tool_call, dict):
+                                        tool_name = tool_call.get("name", "")
+                                        tool_args = tool_call.get("args", {})
+                                        tool_call_id = tool_call.get("id", "")
+                                    else:
+                                        tool_name = getattr(tool_call, "name", "")
+                                        tool_args = getattr(tool_call, "args", {})
+                                        tool_call_id = getattr(tool_call, "id", "")
+                                    
+                                    logger.info(f"Tool call in final state: {tool_name} with args: {tool_args}")
+                                    
+                                    # Check if we already have this tool request
+                                    already_has_request = any(
+                                        step.step_type == "tool_request" and step.tool_name == tool_name
+                                        for step in self.steps
+                                    )
+                                    
+                                    if not already_has_request:
+                                        request_step = AgentStep(
+                                            step_number=step_number,
+                                            step_type="tool_request",
+                                            content=f"Calling {tool_name}",
+                                            tool_name=tool_name,
+                                            tool_input=tool_args,
+                                            reasoning=f"Agent decided to use {tool_name} tool"
+                                        )
+                                        self.steps.append(request_step)
+                                        step_number += 1
+                                        
+                                        yield {
+                                            "type": "step",
+                                            "step": serialize_datetime(request_step.model_dump())
+                                        }
+                        
+                        # Check for ToolMessage we might have missed
+                        elif isinstance(msg, ToolMessage):
+                            tool_result = str(msg.content)
+                            tool_call_id = getattr(msg, "tool_call_id", "")
+                            
+                            logger.info(f"Found tool result in final state (call_id: {tool_call_id}): {tool_result[:200]}...")
+                            
+                            # Check if we already have this result
+                            already_has_result = any(
+                                step.step_type == "tool_result" and step.content == tool_result
+                                for step in self.steps
+                            )
+                            
+                            if not already_has_result:
+                                # Find corresponding tool request
+                                tool_name = None
+                                tool_input = None
+                                for step in reversed(self.steps):
+                                    if step.step_type == "tool_request":
+                                        tool_name = step.tool_name
+                                        tool_input = step.tool_input
+                                        break
+                                
+                                # Create tool result step (for agent process panel only)
+                                result_step = AgentStep(
+                                    step_number=step_number,
+                                    step_type="tool_result",
+                                    content=tool_result,
+                                    tool_name=tool_name,
+                                    tool_input=tool_input,
+                                    tool_output={"result": tool_result},
+                                    reasoning="Tool execution completed"
+                                )
+                                self.steps.append(result_step)
+                                step_number += 1
+                                
+                                yield {
+                                    "type": "step",
+                                    "step": serialize_datetime(result_step.model_dump())
+                                }
+                                
+                                # Don't stream tool result to chat - wait for LLM to process it and generate final answer
+                                # The tool result is passed back to the agent via ToolMessage,
+                                # and the agent will generate a sophisticated answer based on it
+                        
+                        # Check for final AIMessage with answer (if not already processed as tool call)
+                        # This should be the LLM's response after processing tool results
+                        elif isinstance(msg, AIMessage):
+                            # Check if this message has content (even if empty, we should process it)
+                            content = str(msg.content) if msg.content else ""
+                            tool_calls = getattr(msg, 'tool_calls', None) or []
+                            
+                            # Only process if this is a final answer (no tool calls) OR if we've seen tool results
+                            # If it has tool calls but we haven't seen results yet, it's just planning
+                            is_final_answer = not tool_calls or (tool_calls and has_seen_tool_result)
+                            
+                            if is_final_answer and (content.strip() or not tool_calls):
+                                # This is a final answer after tool execution
+                                # Even if content is empty, we should acknowledge the tool execution
+                                if not content.strip() and has_seen_tool_result:
+                                    # LLM didn't generate content after tool results - create a helpful message
+                                    # Check if tool results were empty
+                                    tool_results = [step for step in self.steps if step.step_type == "tool_result"]
+                                    if tool_results:
+                                        last_tool_result = tool_results[-1].content if tool_results else ""
+                                        if not last_tool_result or last_tool_result.strip() in ["[]", "{}", ""]:
+                                            content = "I searched through the files but didn't find any matches for your query. The search returned no results."
+                                        else:
+                                            content = "I've completed the search using the available tools. Here are the results I found."
+                                    else:
+                                        content = "I've completed the task using the available tools."
+                                    logger.warning("LLM didn't generate content after tool results, creating helpful response")
+                                
+                                if content.strip():
+                                    # Check if we already have this as a step
+                                    already_has_answer = any(
+                                        step.step_type == "answer" and step.content == content
+                                        for step in self.steps
+                                    )
+                                    
+                                    if not already_has_answer:
+                                        step = AgentStep(
+                                            step_number=step_number,
+                                            step_type="answer",
+                                            content=content,
+                                            reasoning="Agent final response after tool execution"
+                                        )
+                                        self.steps.append(step)
+                                        step_number += 1
+                                        
+                                        yield {
+                                            "type": "step",
+                                            "step": serialize_datetime(step.model_dump())
+                                        }
+                                        
+                                        # Stream the content if not already streamed
+                                        # Strip reasoning tags for chat
+                                        content_cleaned = strip_reasoning_tags(content)
+                                        if content_cleaned and content_cleaned != accumulated_content:
+                                            remaining = content_cleaned[len(accumulated_content):] if accumulated_content and content_cleaned.startswith(accumulated_content) else content_cleaned
+                                            if remaining:
+                                                for char in remaining:
+                                                    yield {
+                                                        "type": "token",
+                                                        "token": char
+                                                    }
+                                                accumulated_content = content_cleaned
+                                        
+                                        # Reset flag after final answer
+                                        has_seen_tool_result = False
+                
+                # Extract final answer
+                final_answer = self._extract_final_answer(final_state)
+                if not final_answer:
+                    final_answer = self._extract_final_answer_from_steps()
+                if not final_answer:
+                    final_answer = accumulated_content if accumulated_content else "I've completed the task using the available tools."
+                    
+            except Exception as e:
+                logger.warning(f"Failed to get final state: {e}")
+                final_answer = self._extract_final_answer_from_steps()
+                if not final_answer:
+                    final_answer = accumulated_content if accumulated_content else "I've completed the task using the available tools."
+            
+            # If we have a final answer that wasn't streamed, stream it now
+            # Make sure to strip reasoning tags from what we stream to chat
+            if final_answer:
+                # Clean the final answer for chat (remove reasoning tags)
+                final_answer_cleaned = strip_reasoning_tags(final_answer)
+                
+                if final_answer_cleaned and final_answer_cleaned != accumulated_content:
+                    remaining_content = final_answer_cleaned[len(accumulated_content):] if accumulated_content and final_answer_cleaned.startswith(accumulated_content) else final_answer_cleaned
+                    if remaining_content:
+                        for char in remaining_content:
+                            yield {
+                                "type": "token",
+                                "token": char
+                            }
+                        accumulated_content = final_answer_cleaned
+                
+                # Update final_answer to cleaned version for the response
+                final_answer = final_answer_cleaned
             
             # Create final response
             end_time = datetime.utcnow()
-            final_answer = self._get_final_answer()
-            
             response_dict = {
                 "type": "complete",
                 "response": AgentResponse(
@@ -321,189 +742,110 @@ class Agent:
                     final_answer=final_answer,
                     total_tokens=self.total_tokens,
                     execution_time=(end_time - start_time).total_seconds(),
-                    success=True
-                ).dict()
+                    success=True,
+                ).model_dump(),
             }
-            
             yield serialize_datetime(response_dict)
-            return
         
         except Exception as e:
-            logger.error(f"Agent execution error: {e}")
+            logger.error(f"Error streaming agent execution: {e}", exc_info=True)
             yield {
                 "type": "error",
                 "error": str(e)
             }
     
-    def _get_system_prompt(self, tools: List[Dict]) -> str:
-        """Get the system prompt with tools."""
+    def _extract_final_answer(self, state: Dict) -> str:
+        """Extract final answer from agent state - only the LLM's final answer, not raw tool results."""
+        messages = state.get("messages", [])
         
-        base_prompt = """You are a helpful AI Agent. Your job is to help users by using tools when needed.
-
-IMPORTANT: When a user asks you to search, find, or get information, you MUST use a tool immediately. Don't just think about it - DO IT!
-
-FORMAT FOR USING TOOLS:
-Use this EXACT format (no variations):
-
-TOOL_CALL: search_local_files
-{"query": "bug", "top_k": 5}
-
-AVAILABLE TOOLS:
-- search_local_files: Search local files for content
-- web_search: Search the internet
-- read_file: Read a specific file
-- get_system_info: Get system information
-- analyze_code: Analyze code files
-- scrape_webpage: Extract content from web pages
-
-EXAMPLE:
-User: "search local files for bug"
-Your response: 
-TOOL_CALL: search_local_files
-{"query": "bug", "top_k": 5}
-
-DO NOT just think about using tools - USE THEM immediately when the user asks for information!
-
-- Note: If the User Query is in Persian, the response MUST be in Persian. even if it contains a single persian letter."""
+        # Find the last AI message that comes AFTER all tool calls/results
+        # This is the LLM's sophisticated answer based on tool results
+        final_ai_content = ""
+        last_tool_index = -1
+        has_tool_results = False
         
-        return self.model_adapter.format_system_prompt(base_prompt, tools)
+        # Find the index of the last tool message and check if we have tool results
+        for i, message in enumerate(messages):
+            if isinstance(message, ToolMessage):
+                last_tool_index = i
+                has_tool_results = True
+        
+        # Get the last AI message that comes after the last tool result
+        # This is the final answer where LLM has processed tool results
+        for i in range(len(messages) - 1, -1, -1):
+            message = messages[i]
+            if isinstance(message, AIMessage):
+                # Check if this message has content and no tool calls (final answer)
+                tool_calls = getattr(message, 'tool_calls', None) or []
+                if not tool_calls:
+                    # If this AI message comes after tool results, it's the final answer
+                    if i > last_tool_index or last_tool_index == -1:
+                        if message.content:
+                            final_ai_content = str(message.content)
+                        break
+        
+        # If we have tool results but no final answer, create a helpful message
+        if has_tool_results and not final_ai_content:
+            # Check if there are any tool results to reference
+            tool_results = [msg for msg in messages if isinstance(msg, ToolMessage)]
+            if tool_results:
+                # Check if tool results are empty
+                last_tool_result = str(tool_results[-1].content) if tool_results else ""
+                if not last_tool_result or last_tool_result.strip() == "[]" or last_tool_result.strip() == "{}":
+                    final_ai_content = "I searched through the files but didn't find any matches for your query. The search returned no results."
+                else:
+                    final_ai_content = "I've completed the search using the available tools. Here are the results I found."
+            else:
+                final_ai_content = "I've completed the task using the available tools."
+        
+        # If no AI message after tools, get the last AI message
+        if not final_ai_content:
+            for message in reversed(messages):
+                if isinstance(message, AIMessage) and message.content:
+                    final_ai_content = str(message.content)
+                    break
+        
+        # Remove reasoning tags for chat
+        if final_ai_content:
+            cleaned_content = strip_reasoning_tags(final_ai_content)
+            return cleaned_content
+        
+        return ""
     
-    def _parse_response(self, response: str) -> Dict:
-        """Parse agent response for actions."""
+    def _extract_final_answer_from_steps(self) -> str:
+        """Extract final answer from collected steps - only LLM answers, not raw tool results."""
+        # Find the last answer step that comes AFTER tool results
+        # This represents the LLM's final answer after processing tool results
+        last_tool_result_index = -1
         
-        # Clean the response to remove any thinking tags first
-        cleaned_response = self._clean_response_text(response)
-        
-        response_lower = cleaned_response.lower()
-        
-        # Continue with normal parsing on the cleaned response
-        working_response_lower = response_lower
-        
-        # Special case: If user asked to search but model is just thinking, force a tool call
-        original_query = getattr(self, '_current_query', '').lower()
-        if (original_query and 
-            ('search' in original_query or 'find' in original_query) and 
-            'local files' in original_query and
-            not cleaned_response and  # No remaining response after thinking
-            not any(pattern in response.lower() for pattern in ['tool_call:', 'final_answer:'])):
-            
-            # Extract search term from query
-            search_term = "bug"  # Default, but try to extract
-            if 'for ' in original_query:
-                search_term = original_query.split('for ')[-1].strip()
-            
-            return {
-                "type": "tool_call",
-                "tool_name": "search_local_files", 
-                "tool_args": {"query": search_term, "top_k": 5},
-                "plan": f"Search local files for '{search_term}'",
-                "reasoning": "User requested to search local files"
-            }
-        
-        # Check for final answer
-        if "final_answer:" in working_response_lower:
-            answer_start = working_response_lower.index("final_answer:") + 13
-            answer = cleaned_response[answer_start:].strip()
-            return {
-                "type": "final_answer",
-                "content": answer,
-                "reasoning": cleaned_response[:answer_start].strip()
-            }
-        
-        # Check for tool call
-        logger.debug(f"Checking for tool calls in cleaned_response: {cleaned_response}")
-        tool_calls = self.model_adapter.parse_tool_calls(cleaned_response)
-        logger.debug(f"Parsed tool calls: {tool_calls}")
-        if tool_calls:
-            tool_call = tool_calls[0]  # Take first tool call
-            logger.debug(f"Using tool call: {tool_call}")
-            
-            # Extract plan and permission reason
-            plan = ""
-            permission_reason = ""
-            
-            if "plan:" in response_lower:
-                plan_start = response_lower.index("plan:") + 5
-                plan_end = response_lower.find("\n", plan_start)
-                if plan_end == -1:
-                    plan_end = len(cleaned_response)
-                plan = cleaned_response[plan_start:plan_end].strip()
-            
-            if "request_permission:" in response_lower:
-                perm_start = response_lower.index("request_permission:") + 19
-                perm_end = response_lower.find("\n", perm_start)
-                if perm_end == -1:
-                    perm_end = response_lower.find("tool_call:", perm_start)
-                if perm_end == -1:
-                    perm_end = len(cleaned_response)
-                permission_reason = cleaned_response[perm_start:perm_end].strip()
-            
-            return {
-                "type": "tool_call",
-                "tool_name": tool_call["name"],
-                "tool_args": tool_call["arguments"],
-                "plan": plan,
-                "permission_reason": permission_reason,
-                "reasoning": cleaned_response
-            }
-        
-        # Check for reflection
-        if "reflection:" in response_lower or "observation:" in response_lower:
-            return {
-                "type": "reflection",
-                "content": cleaned_response,
-                "reasoning": cleaned_response
-            }
-        
-        # Default to reflection
-        return {
-            "type": "reflection",
-            "content": cleaned_response,
-            "reasoning": cleaned_response
-        }
-    
-    def _get_final_answer(self) -> str:
-        """Extract final answer from steps."""
-        
-        logger.debug(f"Extracting final answer from {len(self.steps)} steps")
+        # Find the index of the last tool result
         for i, step in enumerate(self.steps):
-            logger.debug(f"Step {i}: type={step.step_type}, content_preview={step.content[:100] if step.content else 'None'}...")
+            if step.step_type == "tool_result":
+                last_tool_result_index = i
         
-        # Look for answer step
+        # Get the last answer step that comes after tool results
+        for i in range(len(self.steps) - 1, -1, -1):
+            step = self.steps[i]
+            if step.step_type == "answer" and step.content:
+                # If this answer comes after tool results, it's the final answer
+                if i > last_tool_result_index or last_tool_result_index == -1:
+                    cleaned_content = strip_reasoning_tags(step.content)
+                    if cleaned_content:
+                        return cleaned_content
+        
+        # Fallback: get the last answer step regardless
         for step in reversed(self.steps):
-            if step.step_type == "answer":
-                logger.debug(f"Found answer step: {step.content}")
-                return self._clean_response_text(step.content)
+            if step.step_type == "answer" and step.content:
+                cleaned_content = strip_reasoning_tags(step.content)
+                if cleaned_content:
+                    return cleaned_content
         
-        # Look for final answer in reflection content
+        # Fallback: look for reflection steps
         for step in reversed(self.steps):
-            if step.step_type == "reflection" and step.content:
-                content_lower = step.content.lower()
-                if "final_answer:" in content_lower:
-                    answer_start = content_lower.index("final_answer:") + 13
-                    answer = step.content[answer_start:].strip()
-                    if answer:
-                        return self._clean_response_text(answer)
+            if step.step_type == "reflection" and step.content and not step.tool_name:
+                return strip_reasoning_tags(step.content)
         
-        # If we have thinking steps, look for the last non-thinking step as the answer
-        non_thinking_steps = [step for step in self.steps if step.step_type != "thinking"]
-        logger.debug(f"Found {len(non_thinking_steps)} non-thinking steps")
-        if non_thinking_steps:
-            last_step = non_thinking_steps[-1]
-            logger.debug(f"Last non-thinking step: type={last_step.step_type}, content={last_step.content[:100] if last_step.content else 'None'}...")
-            # If it's a reflection step that doesn't contain tool calls, treat it as the answer
-            if (last_step.step_type == "reflection" and 
-                last_step.content and 
-                "tool_call:" not in last_step.content.lower() and
-                not last_step.tool_name):
-                logger.debug(f"Using reflection step as final answer: {last_step.content}")
-                return self._clean_response_text(last_step.content)
-        
-        # Fallback to last step content
-        if self.steps:
-            return self._clean_response_text(self.steps[-1].content)
-        
-        return "No answer generated"
+        return ""
     
     async def save_to_memory(
         self,
@@ -512,9 +854,7 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
         metadata: Dict
     ):
         """Save message to vector memory."""
-        
         try:
-            # Generate embedding and save
             await self.vector_store.add_documents(
                 documents=[message],
                 metadatas=[{
@@ -534,9 +874,7 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
         k: int = 5
     ) -> List[Dict]:
         """Retrieve relevant context from memory."""
-        
         try:
-            # Search for relevant messages
             results = await self.vector_store.search(
                 query=query,
                 k=k,
@@ -547,272 +885,3 @@ DO NOT just think about using tools - USE THEM immediately when the user asks fo
         except Exception as e:
             logger.error(f"Failed to retrieve context: {e}")
             return []
-    
-    async def _generate_direct_response(self, query: str) -> str:
-        """Generate a direct response when no tool is needed."""
-        try:
-            async def _run() -> str:
-                response_text = ""
-                async for chunk in self.llm_client.chat(
-                    model=self.model,
-                    messages=[{"role": "user", "content": query}],
-                    temperature=self.temperature,
-                    max_tokens=min(self.max_tokens, 512),
-                    stream=False
-                ):
-                    if "message" in chunk and chunk["message"].get("content"):
-                        content = str(chunk["message"]["content"])
-                        if content and content != "None" and content != "undefined":
-                            response_text += content
-                    if chunk.get("done"):
-                        break
-                return response_text
-
-            # Use configurable timeout from settings with a small safety buffer
-            step_timeout = getattr(settings, "STEP_TIMEOUT_SECONDS", 30)
-            response_text = await asyncio.wait_for(_run(), timeout=step_timeout + 5)
-
-            cleaned_response = self._clean_response_text(response_text)
-            return cleaned_response if cleaned_response else "I couldn't generate a response."
-
-        except Exception as e:
-            logger.error(f"Error generating direct response: {e}")
-            return f"I encountered an error while processing your request: {str(e)}"
-    
-    async def _execute_selected_tool(self, tool_name: str, tool_args: Dict, stream: bool = True):
-        """Execute the selected tool with the given arguments."""
-        try:
-            # Create tool request step
-            request_step = AgentStep(
-                step_number=1,
-                step_type="tool_request",
-                content=f"Using {tool_name} tool",
-                tool_name=tool_name,
-                tool_input=tool_args,
-                reasoning=f"Selected {tool_name} as the most appropriate tool for this query"
-            )
-            self.steps.append(request_step)
-            
-            if stream:
-                yield {
-                    "type": "step",
-                    "step": serialize_datetime(request_step.dict())
-                }
-            
-            # Execute the tool
-            tool = tool_registry.get_tool(tool_name)
-            if not tool:
-                error_msg = f"Tool '{tool_name}' not found in registry"
-                error_step = AgentStep(
-                    step_number=2,
-                    step_type="error",
-                    content=error_msg,
-                    reasoning="Tool execution failed"
-                )
-                self.steps.append(error_step)
-                
-                if stream:
-                    yield {
-                        "type": "step", 
-                        "step": serialize_datetime(error_step.dict())
-                    }
-                return
-            
-            # Check permissions
-            if tool.permission != ToolPermission.SAFE:
-                # For now, auto-approve all tools - in production you'd want proper permission handling
-                pass
-            
-            # Execute tool
-            tool_result = await tool.execute(**tool_args)
-            
-            # Create tool result step
-            result_step = AgentStep(
-                step_number=2,
-                step_type="tool_result",
-                content=str(tool_result.output) if tool_result.success else f"Error: {tool_result.error}",
-                tool_name=tool_name,
-                tool_output=tool_result.dict(),
-                reasoning="Tool execution completed"
-            )
-            self.steps.append(result_step)
-            
-            if stream:
-                yield {
-                    "type": "step",
-                    "step": serialize_datetime(result_step.dict())
-                }
-            
-            # Generate final response based on tool result
-            if tool_result.success:
-                final_answer = await self._generate_response_from_tool_result(tool_result, tool_name)
-            else:
-                final_answer = f"I encountered an error while using the {tool_name} tool: {tool_result.error}"
-            
-            # Create answer step
-            answer_step = AgentStep(
-                step_number=3,
-                step_type="answer",
-                content=final_answer,
-                reasoning="Generated final response based on tool results"
-            )
-            self.steps.append(answer_step)
-            
-            if stream:
-                yield {
-                    "type": "step",
-                    "step": serialize_datetime(answer_step.dict())
-                }
-            
-        except Exception as e:
-            logger.error(f"Error executing tool {tool_name}: {e}")
-            error_step = AgentStep(
-                step_number=len(self.steps) + 1,
-                step_type="error",
-                content=f"Failed to execute {tool_name}: {str(e)}",
-                reasoning="Tool execution error"
-            )
-            self.steps.append(error_step)
-            
-            if stream:
-                yield {
-                    "type": "step",
-                    "step": serialize_datetime(error_step.dict())
-                }
-    
-    def _clean_response_text(self, text: str) -> str:
-        """Remove thinking tags and clean up response text."""
-        import re
-        
-        # Remove <think></think> and <thinking></thinking> tags and their content
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        
-        # Clean up extra whitespace and newlines
-        text = re.sub(r'\n\s*\n', '\n', text).strip()
-        
-        return text
-    
-    async def _generate_response_from_tool_result(self, tool_result: Any, tool_name: str) -> str:
-        """Generate a natural language response from tool results using LLM reasoning."""
-        try:
-            # Get tool information for context
-            tool = tool_registry.get_tool(tool_name)
-            tool_description = tool.description if tool else f"the {tool_name} tool"
-            
-            # Prepare the tool result for the LLM
-            if hasattr(tool_result, 'output'):
-                result_data = tool_result.output
-            else:
-                result_data = str(tool_result)
-            
-            # Create a more concise prompt to avoid timeouts
-            prompt = f"""Summarize this tool result for the user and show relevant content:
-
-Tool: {tool_name} - {tool_description}
-Result: {json.dumps(result_data, indent=2) if isinstance(result_data, (dict, list)) else str(result_data)[:1000]}
-
-Instructions:
-1. Start with what was accomplished
-2. If there's text content, show a meaningful preview (200-400 characters)
-3. If there are search results, list the top findings
-4. Keep it concise but informative
-5. Always include actual content when available"""
-
-            async def _run() -> str:
-                response_text = ""
-                try:
-                    async for chunk in self.llm_client.chat(
-                        model=self.model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.3,
-                        max_tokens=400,  # Increased to allow for content preview
-                        stream=False
-                    ):
-                        if "message" in chunk and chunk["message"].get("content"):
-                            content = str(chunk["message"]["content"])
-                            if content and content != "None" and content != "undefined":
-                                response_text += content
-                        if chunk.get("done"):
-                            break
-                except Exception as llm_error:
-                    logger.error(f"LLM call failed: {llm_error}")
-                    return ""
-                return response_text
-
-            # Use shorter timeout for faster fallback
-            step_timeout = min(getattr(settings, "STEP_TIMEOUT_SECONDS", 30), 15)
-            try:
-                response_text = await asyncio.wait_for(_run(), timeout=step_timeout)
-            except asyncio.TimeoutError:
-                logger.warning(f"LLM response generation timed out for {tool_name}, using fallback")
-                return self._generate_fallback_response(tool_name, result_data)
-
-            cleaned_response = self._clean_response_text(response_text)
-            
-            # Fallback if LLM doesn't generate a good response
-            if not cleaned_response or len(cleaned_response.strip()) < 10:
-                return self._generate_fallback_response(tool_name, result_data)
-            
-            return cleaned_response
-            
-        except Exception as e:
-            logger.error(f"Error generating response from tool result: {e}", exc_info=True)
-            return self._generate_fallback_response(tool_name, result_data if 'result_data' in locals() else None, str(e))
-    
-    def _generate_fallback_response(self, tool_name: str, result_data: Any = None, error: str = None) -> str:
-        """Generate a fallback response when LLM-based generation fails."""
-        if error:
-            return f"I successfully used the {tool_name} tool, but encountered an issue generating the response. The tool executed correctly and returned results."
-        
-        # Enhanced analysis of common result patterns
-        if isinstance(result_data, dict):
-            # Handle scraping tools
-            if 'text_length' in result_data:
-                url = result_data.get('url', 'the target')
-                status = result_data.get('status_code', 'unknown')
-                text_length = result_data.get('text_length', 0)
-                text_content = result_data.get('text', '')
-                
-                if text_length > 0 and text_content:
-                    # Show preview of the actual scraped content
-                    preview_length = min(500, len(text_content))
-                    content_preview = text_content[:preview_length]
-                    
-                    response = f"I successfully scraped {url} (status {status}) and extracted {text_length} characters of text content.\n\n"
-                    response += f"Here's the content:\n\n{content_preview}"
-                    
-                    if len(text_content) > preview_length:
-                        response += f"\n\n... [Content truncated. Total length: {text_length} characters]"
-                    
-                    return response
-                else:
-                    content_length = result_data.get('content_length', 'unknown')
-                    return f"I successfully connected to {url} (status {status}) and received {content_length} characters of HTML, but couldn't extract readable text. This is likely due to JavaScript content loading or anti-bot protection."
-            
-            # Handle search tools
-            elif 'results' in result_data and isinstance(result_data['results'], list):
-                count = len(result_data['results'])
-                results = result_data['results']
-                
-                response = f"I successfully used the {tool_name} tool and found {count} result{'s' if count != 1 else ''}."
-                
-                # Show preview of search results
-                if results and count > 0:
-                    response += "\n\nResults:\n"
-                    for i, result in enumerate(results[:3], 1):  # Show top 3
-                        if isinstance(result, dict):
-                            title = result.get('title', result.get('file_name', f'Result {i}'))
-                            content = result.get('content', result.get('snippet', ''))
-                            response += f"\n{i}. {title}"
-                            if content:
-                                response += f"\n   {content[:200]}{'...' if len(content) > 200 else ''}"
-                
-                return response
-            
-            # Handle HTTP tools
-            elif 'status_code' in result_data:
-                status = result_data.get('status_code', 'unknown')
-                return f"I successfully used the {tool_name} tool and received a response with status {status}."
-        
-        return f"I successfully used the {tool_name} tool and obtained results."
