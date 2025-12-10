@@ -17,6 +17,7 @@ class UserSettings(BaseModel):
     """User settings."""
     theme: str = "dark"
     model: str = app_settings.DEFAULT_MODEL
+    embedding_model: str = app_settings.EMBEDDING_MODEL
     temperature: float = app_settings.MODEL_TEMPERATURE
     max_steps: int = app_settings.MAX_STEPS_PER_REQUEST
     max_tokens: int = app_settings.MODEL_MAX_TOKENS
@@ -49,6 +50,7 @@ async def get_user_settings(
     return UserSettings(
         theme=prefs.get("theme", "dark"),
         model=prefs.get("model", app_settings.DEFAULT_MODEL),
+        embedding_model=prefs.get("embedding_model", app_settings.EMBEDDING_MODEL),
         temperature=prefs.get("temperature", app_settings.MODEL_TEMPERATURE),
         max_steps=prefs.get("max_steps", app_settings.MAX_STEPS_PER_REQUEST),
         max_tokens=prefs.get("max_tokens", app_settings.MODEL_MAX_TOKENS),

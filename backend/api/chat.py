@@ -1,6 +1,6 @@
 """Chat API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -12,6 +12,7 @@ from backend.models import get_db, User, Conversation, Message, AgentStep
 from backend.auth import get_current_user
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
+from backend.utils.file_parser import extract_file_content
 
 router = APIRouter()
 
@@ -39,6 +40,8 @@ class MessageRequest(BaseModel):
     stream: bool = True
     selected_tools: Optional[List[str]] = []
     use_deepagent: bool = False
+    file_contents: Optional[List[dict]] = []  # List of {filename, content, metadata}
+    file_attachments: Optional[List[dict]] = []  # List of {filename, size, type} for tracking
 
 
 class MessageResponse(BaseModel):
@@ -127,8 +130,10 @@ async def get_conversation(
             detail="Conversation not found"
         )
     
-    # Get messages
-    messages = db.query(Message).filter(
+    # Security: Get messages, explicitly joining with Conversation to ensure user ownership
+    messages = db.query(Message).join(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id,  # Explicit user ownership check
         Message.conversation_id == conversation_id
     ).order_by(Message.created_at).all()
     
@@ -207,8 +212,10 @@ async def update_conversation(
     db.commit()
     db.refresh(conversation)
     
-    # Get message count
-    message_count = db.query(Message).filter(
+    # Security: Get message count, explicitly joining with Conversation to ensure user ownership
+    message_count = db.query(Message).join(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id,  # Explicit user ownership check
         Message.conversation_id == conversation_id
     ).count()
     
@@ -228,19 +235,52 @@ async def send_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Send a message to the conversation."""
+    """Send a message to the conversation.
     
-    # Verify conversation ownership
+    Security: Verifies that the conversation belongs to the current user
+    to prevent unauthorized access to other users' conversations and files.
+    """
+    
+    # Security: Verify conversation ownership to prevent data breach
     conversation = db.query(Conversation).filter(
         Conversation.id == conversation_id,
-        Conversation.user_id == current_user.id
+        Conversation.user_id == current_user.id  # Explicit user ownership check
     ).first()
     
     if not conversation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conversation not found"
+            detail="Conversation not found or access denied"
         )
+    
+    # Build message content with file contents appended
+    message_content = request.content
+    file_attachments_data = []
+    file_sections = []  # Initialize to avoid UnboundLocalError
+    
+    if request.file_contents:
+        for file_data in request.file_contents:
+            filename = file_data.get("filename", "Unknown")
+            content = file_data.get("content", "")
+            metadata = file_data.get("metadata", {})
+            
+            if content:
+                file_sections.append(f"\n\n--- Content from file: {filename} ---\n{content}\n--- End of file: {filename} ---")
+            
+            # Store file attachment metadata
+            file_attachments_data.append({
+                "filename": filename,
+                "size": metadata.get("file_size", 0),
+                "type": metadata.get("file_type", "unknown")
+            })
+    
+    # Use file_attachments from request if provided (for tracking)
+    if request.file_attachments:
+        file_attachments_data = request.file_attachments
+        
+    # Append file sections to message content if any files were provided
+    if file_sections:
+        message_content = request.content + "\n\n" + "\n".join(file_sections)
     
     async def generate():
         """Generate streaming response."""
@@ -248,11 +288,12 @@ async def send_message(
             async for event in agent_executor.execute(
                 user=current_user,
                 conversation_id=conversation_id,
-                message=request.content,
+                message=message_content,
                 db=db,
                 stream=request.stream,
                 selected_tools=request.selected_tools,
-                use_deepagent=request.use_deepagent
+                use_deepagent=request.use_deepagent,
+                file_attachments=file_attachments_data if file_attachments_data else None
             ):
                 # Format as SSE
                 if request.stream:
@@ -274,6 +315,62 @@ async def send_message(
         async for event in generate():
             events.append(json.loads(event))
         return events[-1] if events else {"error": "No response generated"}
+
+
+@router.post("/conversations/{conversation_id}/upload")
+async def upload_file(
+    conversation_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload and parse a file for the conversation.
+    
+    Security: Verifies that the conversation belongs to the current user
+    to prevent unauthorized file uploads to other users' conversations.
+    """
+    
+    # Security: Verify conversation ownership to prevent data breach
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id  # Explicit user ownership check
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found or access denied"
+        )
+    
+    # Check file size (max 10MB)
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    file_content = await file.read()
+    
+    if len(file_content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE / 1024 / 1024}MB"
+        )
+    
+    try:
+        # Extract content from file
+        content, metadata = await extract_file_content(
+            file_content,
+            file.filename,
+            extract_metadata=True
+        )
+        
+        return {
+            "filename": file.filename,
+            "content": content,
+            "metadata": metadata,
+            "success": True
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse file: {str(e)}"
+        )
 
 
 @router.post("/conversations/{conversation_id}/stop")
@@ -386,8 +483,10 @@ async def summarize_conversation(
             detail="Conversation not found"
         )
     
-    # Get all messages
-    messages = db.query(Message).filter(
+    # Security: Get all messages, explicitly joining with Conversation to ensure user ownership
+    messages = db.query(Message).join(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id,  # Explicit user ownership check
         Message.conversation_id == conversation_id
     ).order_by(Message.created_at).all()
     
@@ -412,3 +511,108 @@ async def summarize_conversation(
     db.commit()
     
     return {"summary": summary}
+
+
+@router.get("/conversations/{conversation_id}/files")
+async def get_conversation_files(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all files attached to messages in the conversation.
+    
+    Security: Verifies that the conversation belongs to the current user
+    and only returns files from messages in that user's conversation
+    to prevent unauthorized access to other users' files.
+    """
+    
+    # Security: Verify conversation ownership to prevent data breach
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id  # Explicit user ownership check
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found or access denied"
+        )
+    
+    # Security: Get messages with file attachments, explicitly joining with Conversation
+    # to ensure we only get files from the authenticated user's conversation
+    messages = db.query(Message).join(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id,  # Explicit user ownership check
+        Message.conversation_id == conversation_id,
+        Message.file_attachments.isnot(None)
+    ).order_by(Message.created_at).all()
+    
+    # Collect unique files (by filename and size to avoid duplicates)
+    files_map = {}
+    for msg in messages:
+        if msg.file_attachments:
+            for file_att in msg.file_attachments:
+                file_key = f"{file_att.get('filename')}_{file_att.get('size')}"
+                if file_key not in files_map:
+                    files_map[file_key] = {
+                        "filename": file_att.get("filename", "Unknown"),
+                        "size": file_att.get("size", 0),
+                        "type": file_att.get("type", "unknown"),
+                        "message_id": msg.id,
+                        "attached_at": msg.created_at.isoformat() if msg.created_at else None
+                    }
+    
+    return {"files": list(files_map.values())}
+
+
+@router.delete("/conversations/{conversation_id}/files/{message_id}")
+async def delete_file_attachment(
+    conversation_id: int,
+    message_id: int,
+    filename: str = Query(..., description="Name of the file to remove"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Remove a file attachment from a message.
+    
+    Security: Verifies that both the conversation and message belong to the current user
+    to prevent unauthorized deletion of other users' file attachments.
+    """
+    
+    # Security: Verify conversation ownership to prevent data breach
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id  # Explicit user ownership check
+    ).first()
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found or access denied"
+        )
+    
+    # Security: Get the message and verify it belongs to the user's conversation
+    # Explicitly join with Conversation to ensure user ownership at the database level
+    message = db.query(Message).join(Conversation).filter(
+        Message.id == message_id,
+        Message.conversation_id == conversation_id,
+        Conversation.id == conversation_id,
+        Conversation.user_id == current_user.id  # Explicit user ownership check
+    ).first()
+    
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found or access denied"
+        )
+    
+    # Remove the file from attachments
+    if message.file_attachments:
+        updated_attachments = [
+            att for att in message.file_attachments
+            if att.get("filename") != filename
+        ]
+        message.file_attachments = updated_attachments if updated_attachments else None
+        db.commit()
+    
+    return {"message": "File attachment removed successfully"}
