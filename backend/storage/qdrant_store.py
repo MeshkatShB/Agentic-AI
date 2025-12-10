@@ -13,6 +13,7 @@ from qdrant_client.models import (
 )
 from typing import List, Dict, Optional, Any
 import uuid
+from sentence_transformers import SentenceTransformer
 from backend.config import settings
 from .vector_store import VectorStore
 import logging
@@ -23,16 +24,56 @@ logger = logging.getLogger(__name__)
 class QdrantStore(VectorStore):
     """Qdrant implementation of vector store."""
     
-    def __init__(self):
-        """Initialize Qdrant client."""
+    def __init__(self, embedding_model: Optional[str] = None):
+        """Initialize Qdrant client.
+        
+        Args:
+            embedding_model: Optional embedding model name. If None, uses default from settings.
+        """
         super().__init__()
+        
+        # Store the embedding model to use
+        self.embedding_model_name = embedding_model or settings.EMBEDDING_MODEL
         
         # Initialize Qdrant client
         self.client = QdrantClient(url=settings.QDRANT_URL)
         
-        # Get embedding dimension
+        # Cache for user-specific embedding models
+        self._embedding_models_cache: Dict[str, SentenceTransformer] = {}
+        
+        # Get embedding dimension using the specified model
         test_embedding = self.generate_embedding("test")
         self.embedding_dim = len(test_embedding)
+    
+    def _get_embedding_model_instance(self, embedding_model: Optional[str] = None) -> SentenceTransformer:
+        """Get or create an embedding model instance for a specific model."""
+        from sentence_transformers import SentenceTransformer
+        
+        model_name = embedding_model or self.embedding_model_name
+        
+        # Return cached if exists
+        if model_name in self._embedding_models_cache:
+            return self._embedding_models_cache[model_name]
+        
+        # Create new model instance
+        device = self._get_device()
+        model = SentenceTransformer(model_name, device=device)
+        
+        # Cache it
+        self._embedding_models_cache[model_name] = model
+        return model
+    
+    def generate_embedding(self, text: str, embedding_model: Optional[str] = None) -> List[float]:
+        """Generate embedding for text with optional model."""
+        model = self._get_embedding_model_instance(embedding_model)
+        embedding = model.encode(text)
+        return embedding.tolist()
+    
+    def generate_embeddings(self, texts: List[str], embedding_model: Optional[str] = None) -> List[List[float]]:
+        """Generate embeddings for multiple texts with optional model."""
+        model = self._get_embedding_model_instance(embedding_model)
+        embeddings = model.encode(texts)
+        return embeddings.tolist()
     
     async def initialize(self) -> bool:
         """Initialize the vector store."""
@@ -63,7 +104,8 @@ class QdrantStore(VectorStore):
         documents: List[str],
         metadatas: Optional[List[Dict]] = None,
         ids: Optional[List[str]] = None,
-        collection_name: str = "conversations"
+        collection_name: str = "conversations",
+        embedding_model: Optional[str] = None
     ) -> List[str]:
         """Add documents to the store."""
         
@@ -71,8 +113,8 @@ class QdrantStore(VectorStore):
         if ids is None:
             ids = [str(uuid.uuid4()) for _ in documents]
         
-        # Generate embeddings
-        embeddings = self.generate_embeddings(documents)
+        # Generate embeddings with user's embedding model
+        embeddings = self.generate_embeddings(documents, embedding_model=embedding_model)
         
         # Ensure metadatas is provided
         if metadatas is None:
@@ -109,12 +151,13 @@ class QdrantStore(VectorStore):
         query: str,
         k: int = 5,
         filter: Optional[Dict] = None,
-        collection_name: str = "conversations"
+        collection_name: str = "conversations",
+        embedding_model: Optional[str] = None
     ) -> List[Dict]:
         """Search for similar documents."""
         
-        # Generate query embedding
-        query_embedding = self.generate_embedding(query)
+        # Generate query embedding with user's embedding model
+        query_embedding = self.generate_embedding(query, embedding_model=embedding_model)
         
         # Build filter if provided
         qdrant_filter = None

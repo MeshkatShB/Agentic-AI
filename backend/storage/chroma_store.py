@@ -1,5 +1,10 @@
 """ChromaDB vector store implementation."""
 
+import os
+# Disable ChromaDB telemetry before importing
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_SERVER_NOFILE"] = "1"
+
 import chromadb
 from chromadb.config import Settings
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -14,33 +19,79 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Suppress ChromaDB telemetry logging
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
+
 
 class ChromaStore(VectorStore):
     """ChromaDB implementation of vector store."""
     
-    def __init__(self):
-        """Initialize ChromaDB client."""
+    def __init__(self, embedding_model: Optional[str] = None):
+        """Initialize ChromaDB client.
+        
+        Args:
+            embedding_model: Optional embedding model name. If None, uses default from settings.
+        """
         super().__init__()
+        
+        # Store the embedding model name to use
+        self.embedding_model_name = embedding_model or settings.EMBEDDING_MODEL
+        
+        # Cache for user-specific embedding functions (initialize before using)
+        self._embedding_functions_cache: Dict[str, SentenceTransformerEmbeddingFunction] = {}
         
         # Get device for embedding function
         device = self._get_device()
         
-        # Initialize embedding function with configured model and device
+        # Initialize default embedding function with configured model and device
+        # This will be used for default collections, but user-specific collections
+        # will use get_embedding_function() to get the appropriate model
         self.embedding_function = SentenceTransformerEmbeddingFunction(
-            model_name=settings.EMBEDDING_MODEL,
+            model_name=self.embedding_model_name,
             device=device
         )
+        # Cache the default embedding function
+        self._embedding_functions_cache[self.embedding_model_name] = self.embedding_function
         
         # Initialize Chroma client with persistent storage
+        # Disable telemetry completely
         self.client = chromadb.PersistentClient(
             path=settings.CHROMA_PATH,
             settings=Settings(
                 anonymized_telemetry=False,
-                allow_reset=True
+                allow_reset=True,
+                chroma_client_auth_provider=None,
+                chroma_client_auth_credentials=None
             )
         )
         
         self.collections = {}
+    
+    def get_embedding_function(self, embedding_model: Optional[str] = None) -> SentenceTransformerEmbeddingFunction:
+        """Get or create an embedding function for a specific model.
+        
+        Args:
+            embedding_model: Model name. If None, uses the default.
+            
+        Returns:
+            SentenceTransformerEmbeddingFunction instance
+        """
+        model_name = embedding_model or self.embedding_model_name
+        
+        # Return cached if exists
+        if model_name in self._embedding_functions_cache:
+            return self._embedding_functions_cache[model_name]
+        
+        # Create new embedding function
+        device = self._get_device()
+        embedding_func = SentenceTransformerEmbeddingFunction(
+            model_name=model_name,
+            device=device
+        )
+        
+        # Cache it
+        self._embedding_functions_cache[model_name] = embedding_func
+        return embedding_func
     
     async def initialize(self) -> bool:
         """Initialize the vector store."""
@@ -74,14 +125,28 @@ class ChromaStore(VectorStore):
             logger.error(f"Failed to initialize ChromaDB: {e}")
             return False
     
-    def _get_collection(self, collection_name: str = "conversations"):
-        """Get or create a collection."""
-        if collection_name not in self.collections:
-            self.collections[collection_name] = self.client.get_or_create_collection(
+    def _get_collection(self, collection_name: str = "conversations", embedding_model: Optional[str] = None):
+        """Get or create a collection with optional embedding model.
+        
+        Args:
+            collection_name: Name of the collection
+            embedding_model: Optional embedding model name. If provided, uses that model.
+        """
+        # Use collection name + model as key to support different models per collection
+        cache_key = f"{collection_name}_{embedding_model or self.embedding_model_name}"
+        
+        if cache_key not in self.collections:
+            # Get the appropriate embedding function
+            if embedding_model and embedding_model != self.embedding_model_name:
+                embedding_func = self.get_embedding_function(embedding_model)
+            else:
+                embedding_func = self.embedding_function
+            
+            self.collections[cache_key] = self.client.get_or_create_collection(
                 name=collection_name,
-                embedding_function=self.embedding_function
+                embedding_function=embedding_func
             )
-        return self.collections[collection_name]
+        return self.collections[cache_key]
     
     def get_collection(self, collection_name: str = "conversations"):
         """Get a collection by name."""
@@ -92,11 +157,20 @@ class ChromaStore(VectorStore):
         documents: List[str],
         metadatas: Optional[List[Dict]] = None,
         ids: Optional[List[str]] = None,
-        collection_name: str = "conversations"
+        collection_name: str = "conversations",
+        embedding_model: Optional[str] = None
     ) -> List[str]:
-        """Add documents to the store."""
+        """Add documents to the store.
         
-        collection = self._get_collection(collection_name)
+        Args:
+            documents: List of document texts
+            metadatas: Optional metadata for each document
+            ids: Optional IDs for documents
+            collection_name: Name of the collection
+            embedding_model: Optional embedding model to use
+        """
+        
+        collection = self._get_collection(collection_name, embedding_model)
         
         # Generate IDs if not provided
         if ids is None:
@@ -139,11 +213,20 @@ class ChromaStore(VectorStore):
         query: str,
         k: int = 5,
         filter: Optional[Dict] = None,
-        collection_name: str = "conversations"
+        collection_name: str = "conversations",
+        embedding_model: Optional[str] = None
     ) -> List[Dict]:
-        """Search for similar documents."""
+        """Search for similar documents.
         
-        collection = self._get_collection(collection_name)
+        Args:
+            query: Search query text
+            k: Number of results to return
+            filter: Optional metadata filter
+            collection_name: Name of the collection
+            embedding_model: Optional embedding model to use
+        """
+        
+        collection = self._get_collection(collection_name, embedding_model)
         
         try:
             # Search with optional filter

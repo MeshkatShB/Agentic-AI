@@ -64,9 +64,19 @@ class VectorStore(ABC):
         self,
         documents: List[str],
         metadatas: Optional[List[Dict]] = None,
-        ids: Optional[List[str]] = None
+        ids: Optional[List[str]] = None,
+        collection_name: str = "conversations",
+        embedding_model: Optional[str] = None
     ) -> List[str]:
-        """Add documents to the store."""
+        """Add documents to the store.
+        
+        Args:
+            documents: List of document texts
+            metadatas: Optional metadata for each document
+            ids: Optional IDs for documents
+            collection_name: Name of the collection
+            embedding_model: Optional embedding model to use
+        """
         pass
     
     @abstractmethod
@@ -74,9 +84,19 @@ class VectorStore(ABC):
         self,
         query: str,
         k: int = 5,
-        filter: Optional[Dict] = None
+        filter: Optional[Dict] = None,
+        collection_name: str = "conversations",
+        embedding_model: Optional[str] = None
     ) -> List[Dict]:
-        """Search for similar documents."""
+        """Search for similar documents.
+        
+        Args:
+            query: Search query text
+            k: Number of results to return
+            filter: Optional metadata filter
+            collection_name: Name of the collection
+            embedding_model: Optional embedding model to use
+        """
         pass
     
     @abstractmethod
