@@ -5,7 +5,7 @@ import asyncio
 import json
 from typing import Dict, Any, List
 from datetime import datetime
-from duckduckgo_search import AsyncDDGS
+from duckduckgo_search import DDGS
 from backend.tools.base import BaseTool, ToolPermission, ToolResult
 from backend.config import settings
 import logging
@@ -130,71 +130,49 @@ class WebSearchTool(BaseTool):
         results = []
         
         try:
-            async with AsyncDDGS() as ddgs:
-                # Convert time range
-                timelimit = None
-                if time_range == "day":
-                    timelimit = "d"
-                elif time_range == "week":
-                    timelimit = "w"
-                elif time_range == "month":
-                    timelimit = "m"
-                elif time_range == "year":
-                    timelimit = "y"
-                
-                logger.debug(f"DuckDuckGo search params: query={query}, max_results={max_results}, timelimit={timelimit}")
-                
-                # Search
-                try:
-                    search_results = ddgs.text(
-                        query,
-                        max_results=max_results,
-                        timelimit=timelimit
-                    )
-                    
-                    logger.debug(f"DuckDuckGo search_results type: {type(search_results)}")
-                    
-                    # Handle both async and sync iterators
-                    if hasattr(search_results, '__aiter__'):
-                        async for result in search_results:
-                            results.append({
-                                "title": result.get("title", ""),
-                                "url": result.get("href", result.get("link", "")),
-                                "snippet": result.get("body", ""),
-                                "source": "duckduckgo"
-                            })
-                            logger.debug(f"DuckDuckGo result: {result}")
-                            if len(results) >= max_results:
-                                break
-                    else:
-                        # Handle as regular list/iterator
-                        for result in search_results:
-                            results.append({
-                                "title": result.get("title", ""),
-                                "url": result.get("href", result.get("link", "")),
-                                "snippet": result.get("body", ""),
-                                "source": "duckduckgo"
-                            })
-                            logger.debug(f"DuckDuckGo result: {result}")
-                            if len(results) >= max_results:
-                                break
-                except Exception as search_error:
-                    logger.error(f"DuckDuckGo search iteration error: {search_error}")
-                    # Try alternative approach
-                    try:
-                        search_results = list(ddgs.text(query, max_results=max_results, timelimit=timelimit))
-                        logger.debug(f"DuckDuckGo alternative search found {len(search_results)} results")
-                        for result in search_results[:max_results]:
-                            results.append({
-                                "title": result.get("title", ""),
-                                "url": result.get("href", result.get("link", "")),
-                                "snippet": result.get("body", ""),
-                                "source": "duckduckgo"
-                            })
-                    except Exception as alt_error:
-                        logger.error(f"DuckDuckGo alternative search failed: {alt_error}")
-                
-                logger.debug(f"DuckDuckGo search completed with {len(results)} results")
+            # Convert time range
+            timelimit = None
+            if time_range == "day":
+                timelimit = "d"
+            elif time_range == "week":
+                timelimit = "w"
+            elif time_range == "month":
+                timelimit = "m"
+            elif time_range == "year":
+                timelimit = "y"
+            
+            logger.debug(f"DuckDuckGo search params: query={query}, max_results={max_results}, timelimit={timelimit}")
+            
+            # Run synchronous DDGS in a thread pool to make it async-compatible
+            def _sync_search():
+                """Synchronous search function to run in thread pool."""
+                ddgs = DDGS()
+                search_results = ddgs.text(
+                    query,
+                    max_results=max_results,
+                    timelimit=timelimit
+                )
+                # DDGS.text() returns a list, not an iterator
+                return search_results if search_results else []
+            
+            # Execute the synchronous search in a thread pool
+            search_results = await asyncio.to_thread(_sync_search)
+            
+            logger.debug(f"DuckDuckGo search_results type: {type(search_results)}")
+            logger.debug(f"DuckDuckGo search found {len(search_results) if search_results else 0} results")
+            
+            # Process results
+            if search_results:
+                for result in search_results[:max_results]:
+                    results.append({
+                        "title": result.get("title", ""),
+                        "url": result.get("href", result.get("link", "")),
+                        "snippet": result.get("body", ""),
+                        "source": "duckduckgo"
+                    })
+                    logger.debug(f"DuckDuckGo result: {result}")
+            
+            logger.debug(f"DuckDuckGo search completed with {len(results)} results")
         
         except Exception as e:
             logger.error(f"DuckDuckGo search error: {str(e)}", exc_info=True)
