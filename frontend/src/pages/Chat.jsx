@@ -322,22 +322,6 @@ const Chat = () => {
               </div>
             )}
 
-            {/* DeepAgent toggle */}
-            <button
-              onClick={() => setUseDeepAgent(!useDeepAgent)}
-              className={`px-3 py-1.5 rounded-lg transition-all duration-200 ${
-                useDeepAgent
-                  ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
-                  : "text-gray-400 hover:bg-white/10"
-              }`}
-              title="Use DeepAgent for enhanced reasoning"
-            >
-              <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4" />
-                <span className="text-sm">DeepAgent</span>
-              </div>
-            </button>
-
             {/* Steps toggle */}
             <button
               onClick={() => setShowSteps(!showSteps)}
@@ -413,6 +397,20 @@ const Chat = () => {
                   title="Upload file"
                 >
                   <Paperclip className="w-5 h-5" />
+                </button>
+
+                {/* DeepAgent toggle */}
+                <button
+                  onClick={() => setUseDeepAgent(!useDeepAgent)}
+                  disabled={isStreaming}
+                  className={`p-3 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    useDeepAgent
+                      ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                      : "bg-gray-700/50 text-gray-300 hover:bg-gray-700"
+                  }`}
+                  title="Use DeepAgent for enhanced reasoning"
+                >
+                  <Bot className="w-5 h-5" />
                 </button>
 
                 <div className="flex-1">
