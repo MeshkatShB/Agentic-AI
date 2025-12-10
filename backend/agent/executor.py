@@ -182,24 +182,9 @@ class AgentExecutor:
                         )
                         db.add(agent_step)
                         
-                        # Also save as message for compatibility (simplified)
-                        step_msg = Message(
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content=step_data.get("content", ""),
-                            tool_name=step_data.get("tool_name"),
-                            tool_input=step_data.get("tool_input"),
-                            tool_output=step_data.get("tool_output"),
-                            tool_approved=step_data.get("tool_approved"),
-                            reasoning=step_data.get("reasoning"),
-                            step_number=step_data.get("step_number", 0)
-                        )
-                        db.add(step_msg)
-                        db.commit()
-                        
-                        # Update step with message_id
-                        agent_step.message_id = step_msg.id
-                        db.commit()
+                        # Don't save step messages to Message table - they're stored in AgentStep
+                        # Only save the final answer as a message for display in chat
+                        # Steps are available in the steps panel via AgentStep table
                         
                         # Stream step to client
                         yield event
@@ -219,7 +204,32 @@ class AgentExecutor:
                         # Extract data with fallbacks for different agent types
                         steps = response_data.get("steps", [])
                         total_tokens = response_data.get("total_tokens", 0)
-                        final_answer = response_data.get("final_answer", event.get("content", ""))
+                        final_answer = response_data.get("final_answer", "")
+                        
+                        # If final_answer is empty, try to extract from steps
+                        if not final_answer or not final_answer.strip():
+                            # Look for the last "answer" type step
+                            if isinstance(steps, list) and steps:
+                                for step in reversed(steps):
+                                    if step.get("step_type") == "answer" and step.get("content"):
+                                        final_answer = step.get("content", "")
+                                        break
+                            
+                            # If still empty, use a default message
+                            if not final_answer or not final_answer.strip():
+                                final_answer = "I've completed the task using the available tools."
+                        
+                        # Save final assistant message (the actual response shown to user)
+                        # This is the LLM's final answer, not the raw tool results
+                        assistant_msg = Message(
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=final_answer.strip(),
+                            tokens_used=total_tokens
+                        )
+                        db.add(assistant_msg)
+                        db.commit()
+                        logger.info(f"Saved final assistant message with {len(final_answer)} characters")
                         
                         # Update conversation
                         conversation = db.query(Conversation).filter(

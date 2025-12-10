@@ -131,10 +131,13 @@ async def get_conversation(
         )
     
     # Security: Get messages, explicitly joining with Conversation to ensure user ownership
+    # Filter out step messages (those with tool_name) - they're stored in AgentStep table
+    # Only show actual chat messages (user messages and final assistant responses)
     messages = db.query(Message).join(Conversation).filter(
         Conversation.id == conversation_id,
         Conversation.user_id == current_user.id,  # Explicit user ownership check
-        Message.conversation_id == conversation_id
+        Message.conversation_id == conversation_id,
+        Message.tool_name.is_(None)  # Exclude step messages that have tool_name set
     ).order_by(Message.created_at).all()
     
     return {

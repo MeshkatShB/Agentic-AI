@@ -730,6 +730,11 @@ IMPORTANT RULES:
                 # Update final_answer to cleaned version for the response
                 final_answer = final_answer_cleaned
             
+            # Use accumulated_content as the final answer since that's what was actually streamed to the user
+            # This ensures the saved message matches what the user saw
+            if accumulated_content and accumulated_content.strip():
+                final_answer = accumulated_content.strip()
+            
             # Create final response
             end_time = datetime.utcnow()
             response_dict = {
