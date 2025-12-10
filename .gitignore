@@ -226,3 +226,6 @@ logs/
 # LangGraph
 langgraph_db/
 graphs/
+
+# Documents
+user_documents/
