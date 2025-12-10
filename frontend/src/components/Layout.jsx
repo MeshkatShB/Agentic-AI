@@ -79,7 +79,9 @@ const Layout = () => {
             {!sidebarCollapsed && (
               <div>
                 <h1 className="text-xl font-bold text-white">AI Agent</h1>
-                <p className="text-xs text-gray-400">Privacy First</p>
+                <p className="text-xs text-gray-400">
+                  Privacy First, Locality Second
+                </p>
               </div>
             )}
           </div>
