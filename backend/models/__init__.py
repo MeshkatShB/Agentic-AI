@@ -4,6 +4,7 @@ from .database import Base, engine, SessionLocal, get_db
 from .user import User
 from .conversation import Conversation, Message, AgentStep
 from .custom_tool import CustomTool
+from .user_document import UserDocument
 
 __all__ = [
     "Base",
@@ -14,5 +15,6 @@ __all__ = [
     "Conversation",
     "Message",
     "AgentStep",
-    "CustomTool"
+    "CustomTool",
+    "UserDocument"
 ]

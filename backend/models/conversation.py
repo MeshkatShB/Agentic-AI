@@ -67,6 +67,7 @@ class Message(Base):
     # Metadata
     tokens_used = Column(Integer)
     embedding_id = Column(String(100))  # ID in vector store
+    file_attachments = Column(JSON)  # List of file attachments: [{"filename": str, "size": int, "type": str}]
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -89,6 +90,7 @@ class Message(Base):
             "plan": self.plan,
             "step_number": self.step_number,
             "tokens_used": self.tokens_used,
+            "file_attachments": self.file_attachments,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 

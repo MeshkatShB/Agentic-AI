@@ -23,6 +23,7 @@ class User(Base):
     preferences = Column(JSON, default=lambda: {
         "theme": "dark",
         "model": "qwen3:latest",
+        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "temperature": 0.7,
         "max_steps": 10,
         "max_tokens": 2000,
