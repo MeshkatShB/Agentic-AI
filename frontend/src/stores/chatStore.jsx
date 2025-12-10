@@ -86,9 +86,71 @@ export const useChatStore = create((set, get) => ({
         isLoading: false,
         currentSteps: [], // Clear current steps when loading new conversation
       });
+
+      // Load active files for this conversation
+      await get().loadActiveFiles(conversationId);
     } catch (error) {
       set({ isLoading: false });
       toast.error("Failed to load conversation");
+    }
+  },
+
+  activeFiles: [],
+
+  loadActiveFiles: async (conversationId) => {
+    if (!conversationId) return;
+    try {
+      const response = await axios.get(
+        `/chat/conversations/${conversationId}/files`
+      );
+      set({ activeFiles: response.data.files || [] });
+    } catch (error) {
+      console.error("Failed to load active files:", error);
+      set({ activeFiles: [] });
+    }
+  },
+
+  deleteFileAttachment: async (conversationId, messageId, filename) => {
+    try {
+      await axios.delete(
+        `/chat/conversations/${conversationId}/files/${messageId}?filename=${encodeURIComponent(filename)}`
+      );
+      // Reload active files
+      await get().loadActiveFiles(conversationId);
+      toast.success("File removed successfully");
+      return true;
+    } catch (error) {
+      toast.error(
+        error.response?.data?.detail || "Failed to remove file"
+      );
+      return false;
+    }
+  },
+
+  uploadFile: async (conversationId, file) => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await axios.post(
+        `/chat/conversations/${conversationId}/upload`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+
+      // Reload active files after upload
+      await get().loadActiveFiles(conversationId);
+
+      return response.data;
+    } catch (error) {
+      toast.error(
+        error.response?.data?.detail || "Failed to upload file"
+      );
+      return null;
     }
   },
 
@@ -96,9 +158,10 @@ export const useChatStore = create((set, get) => ({
     conversationId,
     content,
     selectedTools = [],
-    useDeepAgent = false
+    useDeepAgent = false,
+    fileContents = []
   ) => {
-    if (!content.trim()) return;
+    if (!content.trim() && fileContents.length === 0) return;
 
     // Create abort controller for this request
     const abortController = new AbortController();
@@ -130,6 +193,13 @@ export const useChatStore = create((set, get) => ({
     }));
 
     try {
+      // Prepare file attachments metadata
+      const fileAttachments = fileContents.map((f) => ({
+        filename: f.filename,
+        size: f.metadata?.file_size || 0,
+        type: f.metadata?.file_type || "unknown",
+      }));
+
       const response = await fetch(
         `/api/chat/conversations/${conversationId}/messages`,
         {
@@ -143,6 +213,8 @@ export const useChatStore = create((set, get) => ({
             stream: true,
             selected_tools: selectedTools,
             use_deepagent: useDeepAgent,
+            file_contents: fileContents,
+            file_attachments: fileAttachments,
           }),
           signal: abortController.signal,
         }
@@ -177,6 +249,20 @@ export const useChatStore = create((set, get) => ({
                     // The token field contains the actual text, not 'content'
                     const tokenText = data.token || data.content || "";
                     if (tokenText && tokenText !== "undefined") {
+                      lastMessage.content += tokenText;
+                    }
+                  }
+                  return { messages };
+                });
+              } else if (data.type === "reasoning") {
+                // Handle reasoning content streaming
+                set((state) => {
+                  const messages = [...state.messages];
+                  const lastMessage = messages[messages.length - 1];
+                  if (lastMessage.role === "assistant") {
+                    const tokenText = data.token || data.content || "";
+                    if (tokenText && tokenText !== "undefined") {
+                      // Append reasoning content to the message
                       lastMessage.content += tokenText;
                     }
                   }

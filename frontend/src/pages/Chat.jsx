@@ -17,6 +17,8 @@ import {
   X,
   Wrench,
   Square,
+  Paperclip,
+  File,
 } from "lucide-react";
 import { useChatStore } from "../stores/chatStore";
 import ConversationList from "../components/ConversationList";
@@ -35,11 +37,15 @@ const Chat = () => {
     isStreaming,
     streamingMessage,
     currentSteps,
+    activeFiles,
     loadConversation,
     createConversation,
     sendMessage,
     updateConversation,
     stopStreaming,
+    uploadFile,
+    loadActiveFiles,
+    deleteFileAttachment,
   } = useChatStore();
 
   const [input, setInput] = useState("");
@@ -51,6 +57,8 @@ const Chat = () => {
   const [titleValue, setTitleValue] = useState("");
   const [selectedTools, setSelectedTools] = useState([]);
   const [useDeepAgent, setUseDeepAgent] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const fileInputRef = useRef(null);
 
   // Function to detect RTL text (Persian, Arabic, Hebrew, etc.)
   const isRTL = (text) => {
@@ -89,8 +97,9 @@ const Chat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+  const handleFileUpload = async (event) => {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
 
     let targetConversation = currentConversation;
     if (!targetConversation) {
@@ -101,17 +110,71 @@ const Chat = () => {
       }
     }
 
-    const message = input;
+    // Upload and parse each file
+    for (const file of files) {
+      try {
+        const result = await uploadFile(targetConversation.id, file);
+        if (result && result.success) {
+          setUploadedFiles((prev) => [
+            ...prev,
+            {
+              id: Date.now() + Math.random(),
+              filename: result.filename,
+              content: result.content,
+              metadata: result.metadata,
+            },
+          ]);
+          toast.success(`File "${file.name}" uploaded successfully`);
+        }
+      } catch (error) {
+        toast.error(`Failed to upload "${file.name}"`);
+      }
+    }
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleRemoveFile = (fileId) => {
+    setUploadedFiles((prev) => prev.filter((f) => f.id !== fileId));
+  };
+
+  const handleSend = async () => {
+    if ((!input.trim() && uploadedFiles.length === 0) || isStreaming) return;
+
+    let targetConversation = currentConversation;
+    if (!targetConversation) {
+      targetConversation = await createConversation();
+      if (!targetConversation) {
+        toast.error("Failed to create conversation");
+        return;
+      }
+    }
+
+    const message = input || "Please analyze the uploaded files.";
+    const fileContents = uploadedFiles.map((f) => ({
+      filename: f.filename,
+      content: f.content,
+      metadata: f.metadata,
+    }));
+
     setInput("");
+    setUploadedFiles([]);
     setShouldAutoScroll(true); // Enable auto-scroll when sending a new message
 
-    // Send message with selected tools
+    // Send message with selected tools and file contents
     await sendMessage(
       targetConversation.id,
       message,
       selectedTools,
-      useDeepAgent
+      useDeepAgent,
+      fileContents
     );
+
+    // Reload active files after sending
+    await loadActiveFiles(targetConversation.id);
   };
 
   const handleStop = () => {
@@ -231,6 +294,16 @@ const Chat = () => {
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* Active files indicator */}
+            {activeFiles.length > 0 && (
+              <div className="flex items-center space-x-1 px-2 py-1 bg-blue-500/20 text-blue-400 rounded-lg border border-blue-500/30">
+                <File className="w-3 h-3" />
+                <span className="text-xs font-medium">
+                  {activeFiles.length} file{activeFiles.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            )}
+
             {/* Tool selector */}
             <ToolSelector
               selectedTools={selectedTools}
@@ -300,13 +373,58 @@ const Chat = () => {
 
             {/* Input area */}
             <div className="p-6 glass-dark border-t border-gray-700/50">
+              {/* Uploaded files preview */}
+              {uploadedFiles.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {uploadedFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="flex items-center space-x-2 px-3 py-2 bg-primary-500/20 border border-primary-500/30 rounded-lg"
+                    >
+                      <File className="w-4 h-4 text-primary-400" />
+                      <span className="text-sm text-primary-300 max-w-[200px] truncate">
+                        {file.filename}
+                      </span>
+                      <button
+                        onClick={() => handleRemoveFile(file.id)}
+                        className="p-1 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-all"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="flex items-end space-x-3">
+                {/* File upload button */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  accept=".pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.htm,.log"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isStreaming}
+                  className="p-3 rounded-xl bg-gray-700/50 text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                  title="Upload file"
+                >
+                  <Paperclip className="w-5 h-5" />
+                </button>
+
                 <div className="flex-1">
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="Ask me anything..."
+                    placeholder={
+                      uploadedFiles.length > 0
+                        ? "Add a message or send to analyze files..."
+                        : "Ask me anything..."
+                    }
                     disabled={isStreaming}
                     rows={1}
                     dir={isRTL(input) ? "rtl" : "ltr"}
@@ -332,7 +450,7 @@ const Chat = () => {
                 ) : (
                   <button
                     onClick={handleSend}
-                    disabled={!input.trim()}
+                    disabled={!input.trim() && uploadedFiles.length === 0}
                     className="p-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                   >
                     <Send className="w-5 h-5" />
@@ -362,8 +480,59 @@ const Chat = () => {
                 animate={{ width: 320, opacity: 1 }}
                 exit={{ width: 0, opacity: 0 }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="glass-dark border-l border-gray-700/50 h-full"
+                className="glass-dark border-l border-gray-700/50 h-full flex flex-col"
               >
+                {/* Active Files Section */}
+                {activeFiles.length > 0 && (
+                  <div className="p-4 border-b border-gray-700/50">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold text-white flex items-center space-x-2">
+                        <File className="w-4 h-4" />
+                        <span>Active Files ({activeFiles.length})</span>
+                      </h3>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                      {activeFiles.map((file, index) => (
+                        <div
+                          key={`${file.filename}_${file.message_id}_${index}`}
+                          className="flex items-center justify-between p-2 bg-gray-800/50 rounded-lg border border-gray-700/50"
+                        >
+                          <div className="flex items-center space-x-2 flex-1 min-w-0">
+                            <File className="w-3 h-3 text-primary-400 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-white truncate">
+                                {file.filename}
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                {(file.size / 1024).toFixed(1)} KB
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (
+                                await deleteFileAttachment(
+                                  currentConversation.id,
+                                  file.message_id,
+                                  file.filename
+                                )
+                              ) {
+                                await loadActiveFiles(
+                                  currentConversation.id
+                                );
+                              }
+                            }}
+                            className="p-1 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-all flex-shrink-0"
+                            title="Remove file"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <StepsPanel
                   steps={currentSteps}
                   historicalSteps={historicalSteps}

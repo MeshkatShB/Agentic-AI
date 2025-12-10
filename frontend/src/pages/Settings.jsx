@@ -29,6 +29,7 @@ const Settings = () => {
   const [userSettings, setUserSettings] = useState({
     theme: "dark",
     model: "qwen3:latest",
+    embedding_model: "Qwen/Qwen3-Embedding-0.6B",
     temperature: 0.7,
     max_steps: 10,
     max_tokens: 2000,
@@ -272,31 +273,131 @@ const Settings = () => {
                   </button>
                 </div>
 
-                {/* Model selection */}
+                {/* AI Model selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     AI Model
                   </label>
-                  <select
-                    value={userSettings.model}
-                    onChange={(e) =>
-                      setUserSettings({
-                        ...userSettings,
-                        model: e.target.value,
-                      })
-                    }
-                    className="input-glass text-white"
-                  >
-                    {systemInfo?.models_available?.map((model) => (
+                  <div className="flex space-x-2">
+                    <select
+                      value={userSettings.model}
+                      onChange={(e) =>
+                        setUserSettings({
+                          ...userSettings,
+                          model: e.target.value,
+                        })
+                      }
+                      className="input-glass text-white flex-1"
+                    >
+                      {systemInfo?.models_available?.map((model) => (
+                        <option
+                          key={model}
+                          value={model}
+                          className="bg-gray-800 text-white"
+                        >
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={userSettings.model}
+                      onChange={(e) =>
+                        setUserSettings({
+                          ...userSettings,
+                          model: e.target.value,
+                        })
+                      }
+                      placeholder="Or type custom model"
+                      className="input-glass text-white flex-1"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Select from available models or type a custom model name
+                  </p>
+                </div>
+
+                {/* Embedding Model selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Embedding Model
+                  </label>
+                  <div className="space-y-2">
+                    <select
+                      value={
+                        userSettings.embedding_model ||
+                        "Qwen/Qwen3-Embedding-0.6B"
+                      }
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setUserSettings({
+                          ...userSettings,
+                          embedding_model: value === "custom" ? "" : value,
+                        });
+                      }}
+                      className="input-glass text-white w-full"
+                    >
                       <option
-                        key={model}
-                        value={model}
+                        value="Qwen/Qwen3-Embedding-0.6B"
                         className="bg-gray-800 text-white"
                       >
-                        {model}
+                        Qwen/Qwen3-Embedding-0.6B (Default - Best for Persian)
                       </option>
-                    ))}
-                  </select>
+                      <option
+                        value="sentence-transformers/all-MiniLM-L6-v2"
+                        className="bg-gray-800 text-white"
+                      >
+                        all-MiniLM-L6-v2 (Fast, English-focused)
+                      </option>
+                      <option
+                        value="sentence-transformers/all-mpnet-base-v2"
+                        className="bg-gray-800 text-white"
+                      >
+                        all-mpnet-base-v2 (High quality, English)
+                      </option>
+                      <option
+                        value="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+                        className="bg-gray-800 text-white"
+                      >
+                        paraphrase-multilingual-MiniLM-L12-v2 (Multilingual)
+                      </option>
+                      <option
+                        value="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+                        className="bg-gray-800 text-white"
+                      >
+                        paraphrase-multilingual-mpnet-base-v2 (Multilingual,
+                        High quality)
+                      </option>
+                      <option value="custom" className="bg-gray-800 text-white">
+                        Custom Model...
+                      </option>
+                    </select>
+                    {userSettings.embedding_model === "" ||
+                    ![
+                      "Qwen/Qwen3-Embedding-0.6B",
+                      "sentence-transformers/all-MiniLM-L6-v2",
+                      "sentence-transformers/all-mpnet-base-v2",
+                      "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                      "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+                    ].includes(userSettings.embedding_model || "") ? (
+                      <input
+                        type="text"
+                        value={userSettings.embedding_model || ""}
+                        onChange={(e) =>
+                          setUserSettings({
+                            ...userSettings,
+                            embedding_model: e.target.value,
+                          })
+                        }
+                        placeholder="Enter embedding model name (e.g., sentence-transformers/model-name)"
+                        className="input-glass text-white w-full"
+                      />
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Model used for document embeddings. Changing this requires
+                    re-indexing documents.
+                  </p>
                 </div>
 
                 {/* Agent Type */}

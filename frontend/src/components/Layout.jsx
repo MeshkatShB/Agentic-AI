@@ -14,6 +14,7 @@ import {
   Shield,
   ChevronLeft,
   ChevronRight,
+  FileText,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { useThemeStore } from "../stores/themeStore";
@@ -35,6 +36,7 @@ const Layout = () => {
 
   const navItems = [
     { path: "/chat", icon: MessageSquare, label: "Chat" },
+    { path: "/documents", icon: FileText, label: "Documents" },
     { path: "/tools", icon: Wrench, label: "Tools" },
     { path: "/settings", icon: Settings, label: "Settings" },
   ];

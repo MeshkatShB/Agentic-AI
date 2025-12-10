@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Wrench,
@@ -203,133 +204,135 @@ const ToolSelector = ({
       </button>
 
       {/* Tool selection dropdown */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="fixed top-20 w-96 glass-dark rounded-xl border border-gray-700/50 shadow-xl z-[9999]"
-            style={{
-              maxHeight: "calc(100vh - 120px)",
-              right: showSteps ? "340px" : "16px", // Account for steps panel width (320px) + margin
-            }}
-          >
-            {/* Header */}
-            <div className="p-4 border-b border-gray-700/50">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-white">Select Tools</h3>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={selectAllTools}
-                    className="px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
-                  >
-                    All
-                  </button>
-                  <button
-                    onClick={clearAllTools}
-                    className="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
-                  >
-                    None
-                  </button>
-                </div>
-              </div>
-              <p className="text-xs text-gray-400">
-                Choose which tools the AI can use in this conversation
-              </p>
-            </div>
-
-            {/* Tools list */}
-            <div className="max-h-80 overflow-y-auto custom-scrollbar">
-              {isLoading ? (
-                <div className="p-4 text-center text-gray-400">
-                  <div className="loading-dots">
-                    <span />
-                    <span />
-                    <span />
+      {isOpen &&
+        createPortal(
+          <AnimatePresence>
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="fixed top-20 w-96 bg-gray-900/95 backdrop-blur-md rounded-xl border border-gray-700/70 shadow-2xl z-[99999]"
+              style={{
+                maxHeight: "calc(100vh - 120px)",
+                right: showSteps ? "340px" : "16px", // Account for steps panel width (320px) + margin
+              }}
+            >
+              {/* Header */}
+              <div className="p-4 border-b border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-white">Select Tools</h3>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={selectAllTools}
+                      className="px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={clearAllTools}
+                      className="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
+                    >
+                      None
+                    </button>
                   </div>
-                  <p className="text-sm mt-2">Loading tools...</p>
                 </div>
-              ) : (
-                <div className="p-2">
-                  {availableTools.map((tool) => {
-                    const Icon = getToolIcon(tool.name);
-                    const description = getToolDescription(tool.name);
-                    const permission = getToolPermission(tool.name);
-                    const isSelected = localSelectedTools.includes(tool.name);
-                    const permissionColor = getPermissionColor(permission);
+                <p className="text-xs text-gray-400">
+                  Choose which tools the AI can use in this conversation
+                </p>
+              </div>
 
-                    return (
-                      <motion.div
-                        key={tool.name}
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="mb-2"
-                      >
-                        <button
-                          onClick={() => toggleTool(tool.name)}
-                          className={`w-full p-3 rounded-lg border transition-all duration-200 ${
-                            isSelected
-                              ? "bg-primary-500/20 border-primary-500/50 text-white"
-                              : "bg-gray-800/30 border-gray-700/50 text-gray-300 hover:bg-gray-700/50"
-                          }`}
+              {/* Tools list */}
+              <div className="max-h-80 overflow-y-auto custom-scrollbar">
+                {isLoading ? (
+                  <div className="p-4 text-center text-gray-400">
+                    <div className="loading-dots">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                    <p className="text-sm mt-2">Loading tools...</p>
+                  </div>
+                ) : (
+                  <div className="p-2">
+                    {availableTools.map((tool) => {
+                      const Icon = getToolIcon(tool.name);
+                      const description = getToolDescription(tool.name);
+                      const permission = getToolPermission(tool.name);
+                      const isSelected = localSelectedTools.includes(tool.name);
+                      const permissionColor = getPermissionColor(permission);
+
+                      return (
+                        <motion.div
+                          key={tool.name}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          className="mb-2"
                         >
-                          <div className="flex items-start space-x-3">
-                            <div className="flex-shrink-0 mt-0.5">
-                              {isSelected ? (
-                                <Check className="w-4 h-4 text-primary-400" />
-                              ) : (
-                                <Icon className="w-4 h-4 text-gray-400" />
-                              )}
-                            </div>
-                            <div className="flex-1 text-left min-w-0">
-                              <div className="flex items-start justify-between mb-1 gap-2">
-                                <h4 className="font-medium text-sm truncate">
-                                  {tool.name
-                                    .replace(/_/g, " ")
-                                    .replace(/\b\w/g, (l) => l.toUpperCase())}
-                                </h4>
-                                <span
-                                  className={`px-2 py-0.5 text-xs rounded-full border flex-shrink-0 ${permissionColor}`}
-                                >
-                                  {permission.replace("_", " ")}
-                                </span>
-                              </div>
-                              <p className="text-xs text-gray-400 mb-1 line-clamp-2">
-                                {description}
-                              </p>
-                              {tool.description &&
-                                tool.description !== description && (
-                                  <p className="text-xs text-gray-500 line-clamp-1">
-                                    {tool.description}
-                                  </p>
+                          <button
+                            onClick={() => toggleTool(tool.name)}
+                            className={`w-full p-3 rounded-lg border transition-all duration-200 ${
+                              isSelected
+                                ? "bg-primary-500/20 border-primary-500/50 text-white"
+                                : "bg-gray-800/30 border-gray-700/50 text-gray-300 hover:bg-gray-700/50"
+                            }`}
+                          >
+                            <div className="flex items-start space-x-3">
+                              <div className="flex-shrink-0 mt-0.5">
+                                {isSelected ? (
+                                  <Check className="w-4 h-4 text-primary-400" />
+                                ) : (
+                                  <Icon className="w-4 h-4 text-gray-400" />
                                 )}
+                              </div>
+                              <div className="flex-1 text-left min-w-0">
+                                <div className="flex items-start justify-between mb-1 gap-2">
+                                  <h4 className="font-medium text-sm truncate">
+                                    {tool.name
+                                      .replace(/_/g, " ")
+                                      .replace(/\b\w/g, (l) => l.toUpperCase())}
+                                  </h4>
+                                  <span
+                                    className={`px-2 py-0.5 text-xs rounded-full border flex-shrink-0 ${permissionColor}`}
+                                  >
+                                    {permission.replace("_", " ")}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-gray-400 mb-1 line-clamp-2">
+                                  {description}
+                                </p>
+                                {tool.description &&
+                                  tool.description !== description && (
+                                    <p className="text-xs text-gray-500 line-clamp-1">
+                                      {tool.description}
+                                    </p>
+                                  )}
+                              </div>
                             </div>
-                          </div>
-                        </button>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                          </button>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
-            {/* Footer */}
-            <div className="p-3 border-t border-gray-700/50 bg-gray-800/30">
-              <div className="flex items-center justify-between text-xs text-gray-400">
-                <span>
-                  {selectedCount} of {totalCount} tools selected
-                </span>
-                <div className="flex items-center space-x-1">
-                  <Info className="w-3 h-3" />
-                  <span>Tools are applied to new messages</span>
+              {/* Footer */}
+              <div className="p-3 border-t border-gray-700/50 bg-gray-800/30">
+                <div className="flex items-center justify-between text-xs text-gray-400">
+                  <span>
+                    {selectedCount} of {totalCount} tools selected
+                  </span>
+                  <div className="flex items-center space-x-1">
+                    <Info className="w-3 h-3" />
+                    <span>Tools are applied to new messages</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </div>
   );
 };
