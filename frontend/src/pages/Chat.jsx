@@ -229,16 +229,16 @@ const Chat = () => {
   };
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex overflow-hidden">
       {/* Conversations sidebar */}
-      <div className="w-80 glass-dark border-r border-gray-700/50 flex flex-col">
+      <div className="w-80 glass-dark border-r border-gray-700/50 flex flex-col overflow-hidden">
         <ConversationList />
       </div>
 
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Chat header */}
-        <div className="h-16 glass-dark border-b border-gray-700/50 flex items-center justify-between px-6">
+        <div className="h-16 glass-dark border-b border-gray-700/50 flex items-center justify-between px-6 flex-shrink-0">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
               <Bot className="w-5 h-5 text-white" />
@@ -372,7 +372,7 @@ const Chat = () => {
             </div>
 
             {/* Input area */}
-            <div className="p-6 glass-dark border-t border-gray-700/50">
+            <div className="p-6 glass-dark border-t border-gray-700/50 flex-shrink-0">
               {/* Uploaded files preview */}
               {uploadedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
@@ -480,7 +480,7 @@ const Chat = () => {
                 animate={{ width: 320, opacity: 1 }}
                 exit={{ width: 0, opacity: 0 }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="glass-dark border-l border-gray-700/50 h-full flex flex-col"
+                className="glass-dark border-l border-gray-700/50 h-full flex flex-col overflow-hidden"
               >
                 {/* Active Files Section */}
                 {activeFiles.length > 0 && (

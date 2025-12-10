@@ -61,11 +61,11 @@ const Layout = () => {
   };
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex overflow-hidden">
       {/* Sidebar */}
       <div
         className={clsx(
-          "glass-dark border-r border-gray-700/50 flex flex-col transition-all duration-300",
+          "glass-dark border-r border-gray-700/50 flex flex-col transition-all duration-300 overflow-hidden",
           sidebarCollapsed ? "w-16" : `w-[${sidebarWidth}px]`
         )}
         style={{ width: sidebarCollapsed ? 64 : sidebarWidth }}
@@ -175,9 +175,9 @@ const Layout = () => {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="h-16 glass-dark border-b border-gray-700/50 flex items-center justify-end px-6">
+        <header className="h-16 glass-dark border-b border-gray-700/50 flex items-center justify-end px-6 flex-shrink-0">
           <div className="flex items-center space-x-4">
             {/* Theme toggle */}
             <button

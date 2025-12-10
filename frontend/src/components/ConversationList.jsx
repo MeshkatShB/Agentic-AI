@@ -111,7 +111,7 @@ const ConversationList = () => {
   };
 
   return (
-    <div className="h-full flex flex-col max-h-screen relative">
+    <div className="h-full flex flex-col overflow-hidden relative">
       {/* Header */}
       <div className="p-4 border-b border-gray-700/50 flex-shrink-0">
         <button

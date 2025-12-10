@@ -30,6 +30,7 @@ const ToolSelector = ({
   const [isLoading, setIsLoading] = useState(false);
   const [localSelectedTools, setLocalSelectedTools] = useState(selectedTools);
   const dropdownRef = useRef(null);
+  const dropdownContentRef = useRef(null);
 
   // Tool icons mapping
   const getToolIcon = (toolName) => {
@@ -103,7 +104,13 @@ const ToolSelector = ({
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+      const isClickInsideButton =
+        dropdownRef.current && dropdownRef.current.contains(event.target);
+      const isClickInsideDropdown =
+        dropdownContentRef.current &&
+        dropdownContentRef.current.contains(event.target);
+
+      if (!isClickInsideButton && !isClickInsideDropdown) {
         setIsOpen(false);
       }
     };
@@ -208,6 +215,7 @@ const ToolSelector = ({
         createPortal(
           <AnimatePresence>
             <motion.div
+              ref={dropdownContentRef}
               initial={{ opacity: 0, y: -10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.95 }}
@@ -224,13 +232,19 @@ const ToolSelector = ({
                   <h3 className="font-semibold text-white">Select Tools</h3>
                   <div className="flex space-x-2">
                     <button
-                      onClick={selectAllTools}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selectAllTools();
+                      }}
                       className="px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
                     >
                       All
                     </button>
                     <button
-                      onClick={clearAllTools}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearAllTools();
+                      }}
                       className="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
                     >
                       None
@@ -270,7 +284,10 @@ const ToolSelector = ({
                           className="mb-2"
                         >
                           <button
-                            onClick={() => toggleTool(tool.name)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTool(tool.name);
+                            }}
                             className={`w-full p-3 rounded-lg border transition-all duration-200 ${
                               isSelected
                                 ? "bg-primary-500/20 border-primary-500/50 text-white"
