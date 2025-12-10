@@ -272,34 +272,6 @@ const Tools = () => {
           </div>
         </div>
 
-        {/* Permission levels */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-dark rounded-xl p-6 mb-8"
-        >
-          <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
-            <Shield className="w-5 h-5 mr-2 text-primary-400" />
-            Permission Levels
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {permissions.map((perm) => (
-              <div
-                key={perm.name}
-                className={`p-3 rounded-lg border ${getPermissionColor(
-                  perm.name
-                )}`}
-              >
-                <p className="font-medium">
-                  {perm.name.replace("_", " ").toUpperCase()}
-                </p>
-                <p className="text-xs opacity-80 mt-1">{perm.description}</p>
-              </div>
-            ))}
-          </div>
-        </motion.div>
-
         {/* Available tools */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -640,6 +612,35 @@ const Tools = () => {
                 actually runs.
               </p>
             </div>
+          </div>
+        </motion.div>
+
+        {/* Permission levels */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="glass-dark rounded-xl p-6 mt-8"
+        >
+          <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
+            <Shield className="w-5 h-5 mr-2 text-primary-400" />
+            Permission Levels
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {permissions.map((perm) => (
+              <div
+                key={perm.name}
+                className={`p-3 rounded-lg border ${getPermissionColor(
+                  perm.name
+                )}`}
+              >
+                <p className="font-medium">
+                  {perm.name.replace("_", " ").toUpperCase()}
+                </p>
+                <p className="text-xs opacity-80 mt-1">{perm.description}</p>
+              </div>
+            ))}
           </div>
         </motion.div>
       </div>
