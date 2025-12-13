@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Shield, User, Lock, Eye, EyeOff } from "lucide-react";
+import { User, Lock, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import toast from "react-hot-toast";
+import Logo from "../components/Logo";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -60,7 +61,7 @@ const Login = () => {
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 mb-4 shadow-2xl">
-            <Shield className="w-10 h-10 text-white" />
+            <Logo className="w-10 h-10" color="white" />
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
           <p className="text-gray-400">Sign in to your local AI agent</p>
