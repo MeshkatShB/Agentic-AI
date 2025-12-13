@@ -14,6 +14,7 @@ from backend.tools import tool_registry
 from backend.tools import tool_registry
 from backend.auth import get_current_user
 from backend.agent.langchain_model import OllamaChatModel
+from backend.agent.model_factory import create_model
 from langchain_core.messages import HumanMessage, SystemMessage
 
 router = APIRouter()
@@ -345,14 +346,47 @@ async def generate_tool_with_ai(
         # Refresh user object to ensure we have latest preferences from database
         db.refresh(current_user)
         
-        # Get user's AI model preference or use default
+        # Get user's API configuration
         preferences = current_user.preferences or {}
-        user_model = preferences.get("model", "qwen3:latest")
+        api_config = preferences.get("api_config", {})
+        llm_provider = api_config.get("llm_provider", "ollama")
         
-        logger.info(f"Using model '{user_model}' for user {current_user.username} (preferences: {preferences})")
+        # Get API keys from environment if not in user config
+        from backend.config import settings as app_settings
+        if not api_config.get("openai_api_key") and app_settings.OPENAI_API_KEY:
+            api_config["openai_api_key"] = app_settings.OPENAI_API_KEY
+        if not api_config.get("deepseek_api_key") and app_settings.DEEPSEEK_API_KEY:
+            api_config["deepseek_api_key"] = app_settings.DEEPSEEK_API_KEY
+        if not api_config.get("mistral_api_key") and app_settings.MISTRAL_API_KEY:
+            api_config["mistral_api_key"] = app_settings.MISTRAL_API_KEY
+        if not api_config.get("gemini_api_key") and app_settings.GEMINI_API_KEY:
+            api_config["gemini_api_key"] = app_settings.GEMINI_API_KEY
         
-        # Create LLM instance (use model_name parameter, not model)
-        llm = OllamaChatModel(model_name=user_model, temperature=0.3)
+        # For Ollama, use the model name from preferences
+        # For other providers, use the model from api_config
+        if llm_provider == "ollama":
+            user_model = preferences.get("model", "qwen3:latest")
+        else:
+            # Use provider-specific model from api_config
+            provider_model_key = f"{llm_provider}_model"
+            user_model = api_config.get(provider_model_key) or preferences.get("model", "qwen3:latest")
+        
+        logger.info(f"Using {llm_provider} provider with model '{user_model}' for user {current_user.username} (preferences: {preferences})")
+        
+        # Create LLM instance using model factory (respects user's API configuration)
+        try:
+            llm = create_model(
+                provider=llm_provider,
+                model_name=user_model,
+                temperature=0.3,  # Lower temperature for more deterministic code generation
+                max_tokens=4000,  # Code generation may need more tokens
+                api_config=api_config
+            )
+        except Exception as model_error:
+            logger.warning(f"Failed to create {llm_provider} model: {model_error}. Falling back to Ollama.")
+            # Fallback to Ollama if provider setup fails
+            user_model = preferences.get("model", "qwen3:latest")
+            llm = OllamaChatModel(model_name=user_model, temperature=0.3)
         
         # Create system prompt for tool generation
         system_prompt = """You are an expert Python developer specializing in creating custom AI tools following LangChain best practices.
