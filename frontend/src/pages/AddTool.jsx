@@ -13,6 +13,8 @@ import {
   Eye,
   EyeOff,
   Play,
+  Sparkles,
+  Loader,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -23,6 +25,9 @@ const AddTool = () => {
   const [showPreview, setShowPreview] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [isTestingCode, setIsTestingCode] = useState(false);
+  const [mode, setMode] = useState("manual"); // "manual" or "ai"
+  const [aiDescription, setAiDescription] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -224,6 +229,47 @@ const AddTool = () => {
       newSchema.required.push(paramName);
     }
     setFormData({ ...formData, parameters_schema: newSchema });
+  };
+
+  const handleAIGenerate = async () => {
+    if (!aiDescription.trim()) {
+      toast.error("Please describe what you want your tool to do");
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const response = await axios.post("/custom-tools/generate", {
+        description: aiDescription,
+        permission_level: formData.permission_level,
+      });
+
+      // Update form with generated data
+      setFormData({
+        ...formData,
+        name: response.data.suggested_name || formData.name,
+        display_name:
+          response.data.suggested_display_name || formData.display_name,
+        description:
+          response.data.suggested_description || formData.description,
+        code: response.data.code,
+        parameters_schema:
+          response.data.parameters_schema || formData.parameters_schema,
+        permission_level:
+          response.data.permission_level || formData.permission_level,
+      });
+
+      toast.success(
+        "Tool code generated successfully! Review and edit as needed."
+      );
+    } catch (error) {
+      console.error("Error generating tool:", error);
+      toast.error(
+        error.response?.data?.detail || "Failed to generate tool code"
+      );
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -477,17 +523,105 @@ const AddTool = () => {
             )}
           </motion.div>
 
+          {/* Mode Toggle */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="glass-dark rounded-xl p-6"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-white flex items-center">
+                <Settings className="w-5 h-5 mr-2 text-primary-400" />
+                Creation Mode
+              </h2>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                type="button"
+                onClick={() => setMode("manual")}
+                className={`flex-1 px-4 py-3 rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 ${
+                  mode === "manual"
+                    ? "bg-primary-500/20 text-primary-400 border border-primary-500/30"
+                    : "bg-gray-800/30 text-gray-400 border border-gray-700/50 hover:bg-gray-700/50"
+                }`}
+              >
+                <Code className="w-4 h-4" />
+                <span>Manual Coding</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("ai")}
+                className={`flex-1 px-4 py-3 rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 ${
+                  mode === "ai"
+                    ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                    : "bg-gray-800/30 text-gray-400 border border-gray-700/50 hover:bg-gray-700/50"
+                }`}
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>AI-Assisted</span>
+              </button>
+            </div>
+          </motion.div>
+
+          {/* AI-Assisted Mode */}
+          {mode === "ai" && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="glass-dark rounded-xl p-6"
+            >
+              <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
+                <Sparkles className="w-5 h-5 mr-2 text-purple-400" />
+                Describe Your Tool
+              </h2>
+              <div className="space-y-4">
+                <textarea
+                  value={aiDescription}
+                  onChange={(e) => setAiDescription(e.target.value)}
+                  placeholder="Describe what you want your tool to do in natural language. For example: 'Create a tool that connects to Google Drive and reads my files' or 'Build a tool that searches Wikipedia and returns summaries'"
+                  rows={6}
+                  className="w-full px-4 py-3 rounded-lg bg-gray-800/50 border border-gray-700/50 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleAIGenerate}
+                  disabled={!aiDescription.trim() || isGenerating}
+                  className="w-full px-4 py-3 rounded-lg bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader className="w-4 h-4 animate-spin" />
+                      <span>Generating Code...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Generate Tool Code</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          )}
+
           {/* Code Editor */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
+            transition={{ delay: mode === "ai" ? 0.35 : 0.3 }}
             className="glass-dark rounded-xl p-6"
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-white flex items-center">
                 <Code className="w-5 h-5 mr-2 text-primary-400" />
                 Tool Implementation
+                {mode === "ai" && (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded border border-purple-500/30">
+                    AI Generated
+                  </span>
+                )}
               </h2>
               <div className="flex space-x-2">
                 <button
