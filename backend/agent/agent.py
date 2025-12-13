@@ -12,13 +12,25 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+# Try to import LLMToolSelectorMiddleware (may not be available in all LangChain versions)
+try:
+    from langchain.agents.middleware import LLMToolSelectorMiddleware
+    LLM_TOOL_SELECTOR_AVAILABLE = True
+except ImportError:
+    LLM_TOOL_SELECTOR_AVAILABLE = False
+
 from backend.agent.langchain_tools import LangChainToolAdapter
 from backend.agent.langchain_model import OllamaChatModel
+from backend.agent.model_factory import create_model
 from backend.tools import tool_registry
 from backend.storage import get_vector_store
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Log if LLMToolSelectorMiddleware is not available
+if not LLM_TOOL_SELECTOR_AVAILABLE:
+    logger.info("LLMToolSelectorMiddleware not available in this LangChain version - tool selection will rely on model's built-in capabilities")
 
 
 def serialize_datetime(obj):
@@ -129,24 +141,51 @@ class Agent:
         model: str = None,
         temperature: float = 0.7,
         max_steps: int = 10,
-        max_tokens: int = 2000
+        max_tokens: int = 2000,
+        api_config: Optional[Dict] = None
     ):
         """Initialize the agent."""
-        self.model = model or settings.DEFAULT_MODEL
         self.temperature = temperature
         self.max_steps = max_steps
         self.max_tokens = max_tokens
+        self.api_config = api_config or {}
+        
+        # Determine provider and model
+        llm_provider = self.api_config.get("llm_provider", "ollama")
+        
+        # For Ollama, use the model name from preferences
+        # For other providers, use the model from api_config
+        if llm_provider == "ollama":
+            self.model = model or settings.DEFAULT_MODEL
+        else:
+            # Use provider-specific model from api_config
+            provider_model_key = f"{llm_provider}_model"
+            self.model = self.api_config.get(provider_model_key) or model or settings.DEFAULT_MODEL
         
         # Initialize components
         self.vector_store = get_vector_store()
         
-        # LangChain model
-        self.langchain_model = OllamaChatModel(
-            model_name=self.model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            base_url=settings.OLLAMA_BASE_URL
-        )
+        # Create LangChain model based on provider
+        try:
+            self.langchain_model = create_model(
+                provider=llm_provider,
+                model_name=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                api_config=self.api_config
+            )
+            logger.info(f"Created {llm_provider} model: {self.model}")
+        except Exception as e:
+            logger.error(f"Failed to create {llm_provider} model: {e}. Falling back to Ollama.")
+            # Fallback to Ollama if provider setup fails
+            self.langchain_model = OllamaChatModel(
+                model_name=settings.DEFAULT_MODEL,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                base_url=settings.OLLAMA_BASE_URL
+            )
+            self.model = settings.DEFAULT_MODEL
+            llm_provider = "ollama"
         
         # Agent instance (will be created with tools)
         self.agent = None
@@ -211,8 +250,43 @@ IMPORTANT RULES:
             langchain_tools = LangChainToolAdapter.convert_tools_for_user(allowed_tools, user_id=user_id)
             logger.info(f"Converted {len(langchain_tools)} tools for agent: {[t.name for t in langchain_tools]}")
             
-            # Create agent with tools (no middleware for now, can be added later)
-            self._create_agent(langchain_tools)
+            # Create middleware list for intelligent tool selection
+            middleware_list = []
+            
+            # Add LLM tool selector middleware to help agent automatically select relevant tools
+            # This is especially useful for web_search when internet information is needed
+            if LLM_TOOL_SELECTOR_AVAILABLE and langchain_tools and len(langchain_tools) > 1:
+                try:
+                    # Use a lightweight model for tool selection (same as main model for consistency)
+                    llm_provider = self.api_config.get("llm_provider", "ollama")
+                    try:
+                        tool_selector_model = create_model(
+                            provider=llm_provider,
+                            model_name=self.model,
+                            temperature=0.1,  # Lower temperature for more deterministic tool selection
+                            max_tokens=500,
+                            api_config=self.api_config
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to create tool selector model with {llm_provider}: {e}. Using Ollama fallback.")
+                        tool_selector_model = OllamaChatModel(
+                            model_name=settings.DEFAULT_MODEL,
+                            temperature=0.1,
+                            max_tokens=500,
+                            base_url=settings.OLLAMA_BASE_URL
+                        )
+                    
+                    tool_selector_middleware = LLMToolSelectorMiddleware(
+                        model=tool_selector_model,
+                        max_tools=10  # Maximum number of tools to select
+                    )
+                    middleware_list.append(tool_selector_middleware)
+                    logger.info("Added LLMToolSelectorMiddleware for intelligent tool selection")
+                except Exception as e:
+                    logger.warning(f"Failed to create LLMToolSelectorMiddleware: {e}. Continuing without it.")
+            
+            # Create agent with tools and middleware
+            self._create_agent(langchain_tools, middleware=middleware_list)
             
             # Build message history from previous messages
             messages = []

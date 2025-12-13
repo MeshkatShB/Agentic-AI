@@ -18,24 +18,48 @@ class AgentExecutor:
     
     def __init__(self):
         """Initialize the executor."""
-        self.active_agents: Dict[int, Agent] = {}  # user_id -> Agent
-        self.execution_locks: Dict[int, asyncio.Lock] = {}  # user_id -> Lock
+        self.active_agents: Dict[str, Agent] = {}  # agent_key (e.g., "1_langchain") -> Agent
+        self.execution_locks: Dict[str, asyncio.Lock] = {}  # agent_key -> Lock
         self.cancellation_tokens: Dict[int, asyncio.Event] = {}  # user_id -> CancellationEvent
     
     def get_agent_for_user(
         self,
         user: User,
         conversation_id: int,
-        use_deepagent: bool = False
+        use_deepagent: bool = False,
+        db: Optional[Session] = None
     ) -> Agent:
         """Get or create agent for user."""
         
-        agent_key = f"{user.id}_{'deepagent' if use_deepagent else 'langchain'}"
+        # Refresh user object to ensure we have latest preferences
+        # (user object might be stale if it came from a previous request)
+        if db is not None:
+            db.refresh(user)
+        
+        # Get API configuration to determine provider
+        preferences = user.preferences or {}
+        api_config = preferences.get("api_config", {})
+        llm_provider = api_config.get("llm_provider", "ollama")
+        
+        # Include provider in agent key so changing providers creates a new agent
+        agent_key = f"{user.id}_{'deepagent' if use_deepagent else 'langchain'}_{llm_provider}"
         
         if agent_key not in self.active_agents:
             # Create new agent with user preferences
-            preferences = user.preferences or {}
             model = preferences.get("model", settings.DEFAULT_MODEL)
+            
+            # Get API keys from environment if not in user config
+            from backend.config import settings as app_settings
+            if not api_config.get("openai_api_key") and app_settings.OPENAI_API_KEY:
+                api_config["openai_api_key"] = app_settings.OPENAI_API_KEY
+            if not api_config.get("deepseek_api_key") and app_settings.DEEPSEEK_API_KEY:
+                api_config["deepseek_api_key"] = app_settings.DEEPSEEK_API_KEY
+            if not api_config.get("mistral_api_key") and app_settings.MISTRAL_API_KEY:
+                api_config["mistral_api_key"] = app_settings.MISTRAL_API_KEY
+            if not api_config.get("gemini_api_key") and app_settings.GEMINI_API_KEY:
+                api_config["gemini_api_key"] = app_settings.GEMINI_API_KEY
+            
+            logger.info(f"Creating agent for user {user.username} with provider '{llm_provider}', model '{model}' (preferences: {preferences})")
             
             if use_deepagent:
                 try:
@@ -49,14 +73,16 @@ class AgentExecutor:
                         model=model,
                         temperature=preferences.get("temperature", settings.MODEL_TEMPERATURE),
                         max_steps=preferences.get("max_steps", settings.MAX_STEPS_PER_REQUEST),
-                        max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP)
+                        max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP),
+                        api_config=api_config
                     )
             else:
                 agent = Agent(
                     model=model,
                     temperature=preferences.get("temperature", settings.MODEL_TEMPERATURE),
                     max_steps=preferences.get("max_steps", settings.MAX_STEPS_PER_REQUEST),
-                    max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP)
+                    max_tokens=preferences.get("max_tokens", settings.MAX_TOKENS_PER_STEP),
+                    api_config=api_config
                 )
             
             self.active_agents[agent_key] = agent
@@ -81,10 +107,14 @@ class AgentExecutor:
         cancellation_token = asyncio.Event()
         self.cancellation_tokens[user.id] = cancellation_token
         
-        # Get agent and lock
-        agent = self.get_agent_for_user(user, conversation_id, use_deepagent=use_deepagent)
+        # Get agent and lock (pass db to ensure fresh user preferences)
+        agent = self.get_agent_for_user(user, conversation_id, use_deepagent=use_deepagent, db=db)
         
-        agent_key = f"{user.id}_{'deepagent' if use_deepagent else 'langchain'}"
+        # Get provider for agent key
+        preferences = user.preferences or {}
+        api_config = preferences.get("api_config", {})
+        llm_provider = api_config.get("llm_provider", "ollama")
+        agent_key = f"{user.id}_{'deepagent' if use_deepagent else 'langchain'}_{llm_provider}"
         if agent_key not in self.execution_locks:
             self.execution_locks[agent_key] = asyncio.Lock()
         
@@ -181,6 +211,12 @@ class AgentExecutor:
                             tokens_used=step_data.get("tokens_used")
                         )
                         db.add(agent_step)
+                        # Commit immediately to ensure data consistency - prevents data loss if stream is interrupted
+                        try:
+                            db.commit()
+                        except Exception as commit_error:
+                            logger.error(f"Failed to commit AgentStep: {commit_error}")
+                            db.rollback()
                         
                         # Don't save step messages to Message table - they're stored in AgentStep
                         # Only save the final answer as a message for display in chat
@@ -278,11 +314,18 @@ class AgentExecutor:
                     del self.cancellation_tokens[user.id]
     
     def clear_agent(self, user_id: int):
-        """Clear agent for user."""
-        if user_id in self.active_agents:
-            del self.active_agents[user_id]
-        if user_id in self.execution_locks:
-            del self.execution_locks[user_id]
+        """Clear agent for user (all agent types)."""
+        # Clear all agent types for this user (langchain and deepagent)
+        agent_keys_to_remove = [
+            key for key in self.active_agents.keys() 
+            if key.startswith(f"{user_id}_")
+        ]
+        for agent_key in agent_keys_to_remove:
+            del self.active_agents[agent_key]
+            if agent_key in self.execution_locks:
+                del self.execution_locks[agent_key]
+        
+        # Clear cancellation token
         if user_id in self.cancellation_tokens:
             # Set the cancellation token to stop current execution
             self.cancellation_tokens[user_id].set()
