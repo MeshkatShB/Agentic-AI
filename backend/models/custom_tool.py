@@ -42,6 +42,7 @@ class CustomTool(Base):
             "description": self.description,
             "permission_level": self.permission_level,
             "is_active": self.is_active,
+            "code": self.code,
             "parameters_schema": self.parameters_schema,
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
