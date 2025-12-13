@@ -26,7 +26,7 @@ const ToolSelector = ({
 }) => {
   const { user, refreshUserData } = useAuthStore();
   const [isOpen, setIsOpen] = useState(false);
-  const [availableTools, setAvailableTools] = useState([]);
+  const [availableTools, setAvailableTools] = useState({ builtin: [], custom: [], all: [] });
   const [isLoading, setIsLoading] = useState(false);
   const [localSelectedTools, setLocalSelectedTools] = useState(selectedTools);
   const dropdownRef = useRef(null);
@@ -135,8 +135,11 @@ const ToolSelector = ({
         axios.get("/custom-tools/"), // active_only defaults to true on backend
       ]);
 
-      // Built-in tools are already in correct shape
-      const builtin = Array.isArray(builtinRes.data) ? builtinRes.data : [];
+      // Built-in tools are already in correct shape, mark them as not custom
+      const builtin = (Array.isArray(builtinRes.data) ? builtinRes.data : []).map(tool => ({
+        ...tool,
+        isCustom: false
+      }));
 
       // Map custom tools to ToolInfo shape and include only those enabled by the user
       const customEnabled = (
@@ -152,14 +155,22 @@ const ToolSelector = ({
             properties: {},
             required: [],
           },
+          isCustom: true,
         }));
 
-      // Combine and filter by user's allowed_tools
-      const combined = [...builtin, ...customEnabled].filter((tool) =>
+      // Keep them separate for grouping, but combine for filtering
+      const builtinFiltered = builtin.filter((tool) =>
+        userAllowedTools.includes(tool.name)
+      );
+      const customFiltered = customEnabled.filter((tool) =>
         userAllowedTools.includes(tool.name)
       );
 
-      setAvailableTools(combined);
+      setAvailableTools({
+        builtin: builtinFiltered,
+        custom: customFiltered,
+        all: [...builtinFiltered, ...customFiltered]
+      });
     } catch (error) {
       console.error("Failed to load tools:", error);
       toast.error("Failed to load available tools");
@@ -179,7 +190,7 @@ const ToolSelector = ({
   };
 
   const selectAllTools = () => {
-    const allToolNames = availableTools.map((tool) => tool.name);
+    const allToolNames = availableTools.all.map((tool) => tool.name);
     setLocalSelectedTools(allToolNames);
     onToolsChange(allToolNames);
   };
@@ -190,7 +201,15 @@ const ToolSelector = ({
   };
 
   const selectedCount = localSelectedTools.length;
-  const totalCount = availableTools.length;
+  const totalCount = availableTools.all.length;
+
+  // Helper to format parameters for display
+  const formatParameters = (parameters) => {
+    if (!parameters || !parameters.properties || Object.keys(parameters.properties).length === 0) {
+      return null;
+    }
+    return parameters;
+  };
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -269,67 +288,214 @@ const ToolSelector = ({
                   </div>
                 ) : (
                   <div className="p-2">
-                    {availableTools.map((tool) => {
-                      const Icon = getToolIcon(tool.name);
-                      const description = getToolDescription(tool.name);
-                      const permission = getToolPermission(tool.name);
-                      const isSelected = localSelectedTools.includes(tool.name);
-                      const permissionColor = getPermissionColor(permission);
+                    {/* Built-in Tools Section */}
+                    {availableTools.builtin.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">
+                          Built-in Tools
+                        </h4>
+                        {availableTools.builtin.map((tool) => {
+                          const Icon = getToolIcon(tool.name);
+                          const description = getToolDescription(tool.name);
+                          const permission = getToolPermission(tool.name);
+                          const isSelected = localSelectedTools.includes(tool.name);
+                          const permissionColor = getPermissionColor(permission);
+                          const toolParams = formatParameters(tool.parameters);
 
-                      return (
-                        <motion.div
-                          key={tool.name}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          className="mb-2"
-                        >
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleTool(tool.name);
-                            }}
-                            className={`w-full p-3 rounded-lg border transition-all duration-200 ${
-                              isSelected
-                                ? "bg-primary-500/20 border-primary-500/50 text-white"
-                                : "bg-gray-800/30 border-gray-700/50 text-gray-300 hover:bg-gray-700/50"
-                            }`}
-                          >
-                            <div className="flex items-start space-x-3">
-                              <div className="flex-shrink-0 mt-0.5">
-                                {isSelected ? (
-                                  <Check className="w-4 h-4 text-primary-400" />
-                                ) : (
-                                  <Icon className="w-4 h-4 text-gray-400" />
-                                )}
-                              </div>
-                              <div className="flex-1 text-left min-w-0">
-                                <div className="flex items-start justify-between mb-1 gap-2">
-                                  <h4 className="font-medium text-sm truncate">
-                                    {tool.name
-                                      .replace(/_/g, " ")
-                                      .replace(/\b\w/g, (l) => l.toUpperCase())}
-                                  </h4>
-                                  <span
-                                    className={`px-2 py-0.5 text-xs rounded-full border flex-shrink-0 ${permissionColor}`}
-                                  >
-                                    {permission.replace("_", " ")}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-gray-400 mb-1 line-clamp-2">
-                                  {description}
-                                </p>
-                                {tool.description &&
-                                  tool.description !== description && (
-                                    <p className="text-xs text-gray-500 line-clamp-1">
-                                      {tool.description}
+                          return (
+                            <motion.div
+                              key={tool.name}
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              className="mb-2"
+                            >
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleTool(tool.name);
+                                }}
+                                className={`w-full p-3 rounded-lg border transition-all duration-200 ${
+                                  isSelected
+                                    ? "bg-primary-500/20 border-primary-500/50 text-white"
+                                    : "bg-gray-800/30 border-gray-700/50 text-gray-300 hover:bg-gray-700/50"
+                                }`}
+                              >
+                                <div className="flex items-start space-x-3">
+                                  <div className="flex-shrink-0 mt-0.5">
+                                    {isSelected ? (
+                                      <Check className="w-4 h-4 text-primary-400" />
+                                    ) : (
+                                      <Icon className="w-4 h-4 text-gray-400" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 text-left min-w-0">
+                                    <div className="flex items-start justify-between mb-1 gap-2">
+                                      <h4 className="font-medium text-sm truncate">
+                                        {tool.name
+                                          .replace(/_/g, " ")
+                                          .replace(/\b\w/g, (l) => l.toUpperCase())}
+                                      </h4>
+                                      <span
+                                        className={`px-2 py-0.5 text-xs rounded-full border flex-shrink-0 ${permissionColor}`}
+                                      >
+                                        {permission.replace("_", " ")}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-gray-400 mb-1 line-clamp-2">
+                                      {description}
                                     </p>
-                                  )}
-                              </div>
-                            </div>
-                          </button>
-                        </motion.div>
-                      );
-                    })}
+                                    {tool.description &&
+                                      tool.description !== description && (
+                                        <p className="text-xs text-gray-500 line-clamp-1">
+                                          {tool.description}
+                                        </p>
+                                      )}
+                                    {toolParams && (
+                                      <div className="mt-2 pt-2 border-t border-gray-700/30">
+                                        <p className="text-xs font-medium text-gray-500 mb-1">
+                                          Parameters:
+                                        </p>
+                                        <div className="space-y-0.5">
+                                          {Object.entries(toolParams.properties).slice(0, 3).map(([param, spec]) => (
+                                            <div key={param} className="flex items-center text-xs">
+                                              <span className="text-primary-400 font-mono">
+                                                {param}
+                                              </span>
+                                              <span className="text-gray-500 mx-1">:</span>
+                                              <span className="text-gray-400">
+                                                {spec.type}
+                                                {toolParams.required?.includes(param) && (
+                                                  <span className="text-yellow-400 ml-1">*</span>
+                                                )}
+                                              </span>
+                                            </div>
+                                          ))}
+                                          {Object.keys(toolParams.properties).length > 3 && (
+                                            <p className="text-xs text-gray-500">
+                                              +{Object.keys(toolParams.properties).length - 3} more
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Custom Tools Section */}
+                    {availableTools.custom.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-2">
+                          Custom Tools
+                        </h4>
+                        {availableTools.custom.map((tool) => {
+                          const Icon = getToolIcon(tool.name);
+                          const description = getToolDescription(tool.name);
+                          const permission = getToolPermission(tool.name);
+                          const isSelected = localSelectedTools.includes(tool.name);
+                          const permissionColor = getPermissionColor(permission);
+                          const toolParams = formatParameters(tool.parameters);
+
+                          return (
+                            <motion.div
+                              key={tool.name}
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              className="mb-2"
+                            >
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleTool(tool.name);
+                                }}
+                                className={`w-full p-3 rounded-lg border transition-all duration-200 ${
+                                  isSelected
+                                    ? "bg-primary-500/20 border-primary-500/50 text-white"
+                                    : "bg-gray-800/30 border-gray-700/50 text-gray-300 hover:bg-gray-700/50"
+                                }`}
+                              >
+                                <div className="flex items-start space-x-3">
+                                  <div className="flex-shrink-0 mt-0.5">
+                                    {isSelected ? (
+                                      <Check className="w-4 h-4 text-primary-400" />
+                                    ) : (
+                                      <Icon className="w-4 h-4 text-gray-400" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 text-left min-w-0">
+                                    <div className="flex items-start justify-between mb-1 gap-2">
+                                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        <h4 className="font-medium text-sm truncate">
+                                          {tool.name
+                                            .replace(/_/g, " ")
+                                            .replace(/\b\w/g, (l) => l.toUpperCase())}
+                                        </h4>
+                                        <span className="px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full border border-purple-500/30 flex-shrink-0">
+                                          Custom
+                                        </span>
+                                      </div>
+                                      <span
+                                        className={`px-2 py-0.5 text-xs rounded-full border flex-shrink-0 ${permissionColor}`}
+                                      >
+                                        {permission.replace("_", " ")}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-gray-400 mb-1 line-clamp-2">
+                                      {description}
+                                    </p>
+                                    {tool.description &&
+                                      tool.description !== description && (
+                                        <p className="text-xs text-gray-500 line-clamp-1">
+                                          {tool.description}
+                                        </p>
+                                      )}
+                                    {toolParams && (
+                                      <div className="mt-2 pt-2 border-t border-gray-700/30">
+                                        <p className="text-xs font-medium text-gray-500 mb-1">
+                                          Parameters:
+                                        </p>
+                                        <div className="space-y-0.5">
+                                          {Object.entries(toolParams.properties).slice(0, 3).map(([param, spec]) => (
+                                            <div key={param} className="flex items-center text-xs">
+                                              <span className="text-primary-400 font-mono">
+                                                {param}
+                                              </span>
+                                              <span className="text-gray-500 mx-1">:</span>
+                                              <span className="text-gray-400">
+                                                {spec.type}
+                                                {toolParams.required?.includes(param) && (
+                                                  <span className="text-yellow-400 ml-1">*</span>
+                                                )}
+                                              </span>
+                                            </div>
+                                          ))}
+                                          {Object.keys(toolParams.properties).length > 3 && (
+                                            <p className="text-xs text-gray-500">
+                                              +{Object.keys(toolParams.properties).length - 3} more
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {availableTools.all.length === 0 && (
+                      <div className="p-4 text-center text-gray-400">
+                        <p className="text-sm">No tools available</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
