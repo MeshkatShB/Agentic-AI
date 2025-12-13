@@ -1,51 +1,64 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <defs>
-    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#0369a1;stop-opacity:1" />
     </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
   
-  <!-- Shield background -->
-  <path d="M50 10 L80 25 L80 60 Q80 85 50 90 Q20 85 20 60 L20 25 Z" 
-        fill="url(#grad1)" 
-        stroke="#0284c7" 
-        stroke-width="2"
-        filter="url(#glow)"/>
+  <!-- Shield base - Privacy First (outer layer) -->
+  <path
+    d="M32 8L12 16V30C12 42 20 52 32 56C44 52 52 42 52 30V16L32 8Z"
+    fill="url(#shieldGrad)"
+    stroke="#0284c7"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
   
-  <!-- Lock icon -->
-  <g transform="translate(50, 45)">
-    <!-- Lock body -->
-    <rect x="-12" y="0" width="24" height="18" rx="2" fill="white" opacity="0.9"/>
-    
-    <!-- Lock shackle -->
-    <path d="M -8 0 L -8 -8 Q -8 -16 0 -16 Q 8 -16 8 -8 L 8 0" 
-          fill="none" 
-          stroke="white" 
-          stroke-width="3" 
-          stroke-linecap="round"
-          opacity="0.9"/>
-    
-    <!-- Keyhole -->
-    <circle cx="0" cy="7" r="2" fill="#0369a1"/>
-    <rect x="-1" y="7" width="2" height="6" fill="#0369a1"/>
-  </g>
+  <!-- Shield inner detail - adds depth -->
+  <path
+    d="M32 12L16 18.5V30C16 40 22.5 48 32 51C41.5 48 48 40 48 30V18.5L32 12Z"
+    fill="none"
+    stroke="#0284c7"
+    stroke-width="1"
+    stroke-opacity="0.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
   
-  <!-- AI indicator dots -->
-  <circle cx="35" cy="70" r="2" fill="white" opacity="0.8">
-    <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite"/>
-  </circle>
-  <circle cx="50" cy="70" r="2" fill="white" opacity="0.8">
-    <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" begin="0.5s" repeatCount="indefinite"/>
-  </circle>
-  <circle cx="65" cy="70" r="2" fill="white" opacity="0.8">
-    <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" begin="1s" repeatCount="indefinite"/>
-  </circle>
+  <!-- Chatbot/AI head - Locality Second (inside shield) -->
+  <circle
+    cx="32"
+    cy="28"
+    r="8"
+    fill="white"
+    fill-opacity="0.3"
+    stroke="white"
+    stroke-width="1.5"
+  />
+  
+  <!-- AI eyes - representing intelligence -->
+  <circle cx="29" cy="26" r="1.5" fill="white" />
+  <circle cx="35" cy="26" r="1.5" fill="white" />
+  
+  <!-- AI mouth/chat indicator -->
+  <path
+    d="M28 30C28 30 29.5 32 32 32C34.5 32 36 30 36 30"
+    stroke="white"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    fill="none"
+  />
+  
+  <!-- Chat message bubble - representing communication -->
+  <path
+    d="M32 36L28 40L32 44L36 40L32 36Z"
+    fill="white"
+    fill-opacity="0.7"
+  />
+  
+  <!-- Small dots - representing data/processing (locality) -->
+  <circle cx="24" cy="38" r="1" fill="white" fill-opacity="0.5" />
+  <circle cx="40" cy="38" r="1" fill="white" fill-opacity="0.5" />
 </svg>
