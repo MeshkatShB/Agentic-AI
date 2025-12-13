@@ -82,4 +82,7 @@ async def get_current_user(
     user.last_login = datetime.utcnow()
     db.commit()
     
+    # Refresh user object to ensure we have latest data (especially preferences)
+    db.refresh(user)
+    
     return user
