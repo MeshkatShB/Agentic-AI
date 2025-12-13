@@ -23,7 +23,14 @@ class WebSearchTool(BaseTool):
     
     @property
     def description(self) -> str:
-        return "Search the web for information (requires permission)"
+        return """Search the web for current information, news, facts, and any internet content. 
+Use this tool when you need to:
+- Find current information or recent news
+- Search for facts, definitions, or explanations
+- Look up information about people, places, events, or topics
+- Get real-time data from the internet
+- Verify information or find sources
+This tool uses SearXNG (if available) or DuckDuckGo to search the web and return relevant results."""
     
     @property
     def parameters(self) -> Dict[str, Any]:
