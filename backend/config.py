@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: Union[str, List[str]] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
     
+    # External API Keys (Optional - can be set via environment variables)
+    # These are used as fallbacks if not configured per-user in the database
+    OPENAI_API_KEY: Optional[str] = None
+    DEEPSEEK_API_KEY: Optional[str] = None
+    MISTRAL_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
+    
     @field_validator('ALLOWED_FILE_PATHS', 'BLOCKED_FILE_PATHS', 'CORS_ORIGINS', mode='before')
     @classmethod
     def parse_comma_separated(cls, v: Any) -> List[str]:
