@@ -113,16 +113,16 @@ export const useChatStore = create((set, get) => ({
   deleteFileAttachment: async (conversationId, messageId, filename) => {
     try {
       await axios.delete(
-        `/chat/conversations/${conversationId}/files/${messageId}?filename=${encodeURIComponent(filename)}`
+        `/chat/conversations/${conversationId}/files/${messageId}?filename=${encodeURIComponent(
+          filename
+        )}`
       );
       // Reload active files
       await get().loadActiveFiles(conversationId);
       toast.success("File removed successfully");
       return true;
     } catch (error) {
-      toast.error(
-        error.response?.data?.detail || "Failed to remove file"
-      );
+      toast.error(error.response?.data?.detail || "Failed to remove file");
       return false;
     }
   },
@@ -147,9 +147,7 @@ export const useChatStore = create((set, get) => ({
 
       return response.data;
     } catch (error) {
-      toast.error(
-        error.response?.data?.detail || "Failed to upload file"
-      );
+      toast.error(error.response?.data?.detail || "Failed to upload file");
       return null;
     }
   },
@@ -277,6 +275,23 @@ export const useChatStore = create((set, get) => ({
                 // Handle permission request
                 const approved = await get().requestPermission(data);
                 // Send approval response (in real implementation)
+              } else if (data.type === "title_update") {
+                // Update conversation title
+                set((state) => {
+                  const updatedConversations = state.conversations.map((conv) =>
+                    conv.id === data.conversation_id
+                      ? { ...conv, title: data.title }
+                      : conv
+                  );
+                  const updatedCurrentConversation =
+                    state.currentConversation?.id === data.conversation_id
+                      ? { ...state.currentConversation, title: data.title }
+                      : state.currentConversation;
+                  return {
+                    conversations: updatedConversations,
+                    currentConversation: updatedCurrentConversation,
+                  };
+                });
               } else if (data.type === "complete") {
                 // Update the final answer
                 console.log("Complete event received:", data);

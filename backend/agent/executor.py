@@ -130,6 +130,26 @@ class AgentExecutor:
                 db.add(user_msg)
                 db.commit()
                 
+                # Check if this is the first user message in the conversation
+                # If so, generate a title based on the message (run in background)
+                user_message_count = db.query(Message).filter(
+                    Message.conversation_id == conversation_id,
+                    Message.role == "user"
+                ).count()
+                
+                # Track title generation task for first message
+                title_task = None
+                if user_message_count == 1:
+                    # This is the first message - generate a title in the background
+                    # Create a task that will return the generated title when complete
+                    title_task = asyncio.create_task(
+                        self._generate_conversation_title(
+                            conversation_id=conversation_id,
+                            first_message=message,
+                            user_id=user.id
+                        )
+                    )
+                
                 # Ensure user's active custom tools are registered
                 try:
                     registered = tool_registry.register_custom_tools_for_user(db, user.id)
@@ -156,6 +176,9 @@ class AgentExecutor:
                 history_messages = [msg for msg in previous_messages if msg.id != user_msg.id]
                 logger.info(f"Retrieved {len(history_messages)} previous messages from conversation {conversation_id}")
                 
+                # Track if we've sent the title update
+                title_sent = False
+                
                 # Run agent with message history
                 async for event in agent.run(
                     query=message,
@@ -173,6 +196,21 @@ class AgentExecutor:
                             "message": "Generation stopped by user"
                         }
                         return
+                    
+                    # Check if title generation is complete and send update if ready
+                    if not title_sent and user_message_count == 1 and title_task:
+                        if title_task.done():
+                            try:
+                                generated_title = await title_task
+                                if generated_title:
+                                    yield {
+                                        "type": "title_update",
+                                        "title": generated_title,
+                                        "conversation_id": conversation_id
+                                    }
+                                    title_sent = True
+                            except Exception as title_error:
+                                logger.warning(f"Error getting generated title: {title_error}")
                     
                     # Handle different event types
                     if event.get("type") == "token":
@@ -302,6 +340,38 @@ class AgentExecutor:
                         logger.error(f"Agent error: {event['error']}")
                         yield event
                 
+                # Final check for title update after all events are processed
+                if not title_sent and user_message_count == 1 and title_task:
+                    if title_task.done():
+                        try:
+                            generated_title = await title_task
+                            if generated_title:
+                                yield {
+                                    "type": "title_update",
+                                    "title": generated_title,
+                                    "conversation_id": conversation_id
+                                }
+                                title_sent = True
+                        except Exception as title_error:
+                            logger.warning(f"Error getting generated title: {title_error}")
+                    else:
+                        # If title generation is still running, wait a bit and check again
+                        # This ensures we send the title update even if it completes after the stream
+                        try:
+                            generated_title = await asyncio.wait_for(title_task, timeout=0.1)
+                            if generated_title:
+                                yield {
+                                    "type": "title_update",
+                                    "title": generated_title,
+                                    "conversation_id": conversation_id
+                                }
+                                title_sent = True
+                        except asyncio.TimeoutError:
+                            # Title generation still in progress, that's okay
+                            pass
+                        except Exception as title_error:
+                            logger.warning(f"Error getting generated title: {title_error}")
+                
             except Exception as e:
                 logger.error(f"Executor error: {e}")
                 yield {
@@ -339,6 +409,137 @@ class AgentExecutor:
         self.active_agents.clear()
         self.execution_locks.clear()
         self.cancellation_tokens.clear()
+    
+    async def _generate_conversation_title(
+        self,
+        conversation_id: int,
+        first_message: str,
+        user_id: int
+    ) -> Optional[str]:
+        """Generate a conversation title based on the first user message.
+        
+        Returns:
+            The generated title, or None if generation failed or was skipped.
+        """
+        from backend.agent.model_factory import create_model
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from backend.config import settings as app_settings
+        from backend.models import SessionLocal
+        
+        # Create a new database session for this background task
+        db = SessionLocal()
+        try:
+            # Get user and conversation with fresh database session
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                logger.warning(f"User {user_id} not found for title generation")
+                return
+            
+            conversation = db.query(Conversation).filter(
+                Conversation.id == conversation_id
+            ).first()
+            
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found for title generation")
+                return
+            
+            # Skip if title is already set (not "New Conversation")
+            if conversation.title and conversation.title != "New Conversation":
+                return
+            
+            # Get user's API configuration
+            preferences = user.preferences or {}
+            api_config = preferences.get("api_config", {})
+            llm_provider = api_config.get("llm_provider", "ollama")
+            
+            # Get API keys from environment if not in user config
+            if not api_config.get("openai_api_key") and app_settings.OPENAI_API_KEY:
+                api_config["openai_api_key"] = app_settings.OPENAI_API_KEY
+            if not api_config.get("deepseek_api_key") and app_settings.DEEPSEEK_API_KEY:
+                api_config["deepseek_api_key"] = app_settings.DEEPSEEK_API_KEY
+            if not api_config.get("mistral_api_key") and app_settings.MISTRAL_API_KEY:
+                api_config["mistral_api_key"] = app_settings.MISTRAL_API_KEY
+            if not api_config.get("gemini_api_key") and app_settings.GEMINI_API_KEY:
+                api_config["gemini_api_key"] = app_settings.GEMINI_API_KEY
+            
+            # Create a lightweight LLM model for title generation
+            # Use lower temperature for more consistent titles
+            title_model = create_model(
+                provider=llm_provider,
+                model_name=None,  # Will use default for provider
+                temperature=0.3,  # Lower temperature for more deterministic titles
+                max_tokens=50,  # Titles should be short
+                api_config=api_config
+            )
+            
+            # Create prompt for title generation
+            system_prompt = """You are a helpful assistant that generates concise, descriptive titles for conversations based on the first message.
+
+Rules:
+- Generate a title that is 3-8 words long
+- Make it descriptive and specific to the user's question or request
+- Do NOT include quotes, markdown, or special formatting
+- Do NOT include words like "Title:", "Conversation:", or "About:"
+- Just return the title text directly
+- If the message is very short or unclear, create a general but relevant title
+- Keep it professional and clear
+
+Examples:
+- "What is the weather today?" → "Weather Inquiry"
+- "Help me write a Python function" → "Python Function Help"
+- "Search for information about quantum computing" → "Quantum Computing Research"
+- "How do I install Node.js?" → "Node.js Installation Guide"
+- "سلام" → "General Inquiry" (or appropriate title in the message language)"""
+            
+            user_prompt = f"Generate a title for this conversation based on the first message:\n\n{first_message[:500]}"  # Limit to 500 chars
+            
+            # Generate title
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            
+            response = await title_model.ainvoke(messages)
+            title = response.content.strip()
+            
+            # Clean up the title (remove quotes, markdown, etc.)
+            title = title.strip('"\'`').strip()
+            # Remove markdown formatting if present
+            if title.startswith("#"):
+                title = title.lstrip("#").strip()
+            # Remove common prefixes
+            for prefix in ["Title:", "Conversation:", "About:", "Topic:"]:
+                if title.lower().startswith(prefix.lower()):
+                    title = title[len(prefix):].strip()
+            
+            # Limit title length (database field is 200 chars, but keep it reasonable)
+            if len(title) > 100:
+                title = title[:97] + "..."
+            
+            # If title is empty or too short, use a fallback
+            if not title or len(title) < 3:
+                # Extract first few words from the message as fallback
+                words = first_message.split()[:5]
+                title = " ".join(words)
+                if len(title) > 50:
+                    title = title[:47] + "..."
+            
+            # Update conversation title
+            conversation.title = title
+            db.commit()
+            logger.info(f"Generated title '{title}' for conversation {conversation_id}")
+            
+            # Return the generated title so it can be sent to the frontend
+            return title
+            
+        except Exception as e:
+            logger.error(f"Error generating conversation title: {e}", exc_info=True)
+            # Don't raise - title generation failure shouldn't break the conversation
+            db.rollback()
+            return None
+        finally:
+            # Always close the database session
+            db.close()
 
 
 # Global executor instance
