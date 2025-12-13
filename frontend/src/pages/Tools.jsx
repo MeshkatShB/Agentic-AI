@@ -13,12 +13,20 @@ import {
   AlertCircle,
   Info,
   Plus,
+  Grid3x3,
+  List,
+  LayoutGrid,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  Filter,
+  X,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
 import { useAuthStore } from "../stores/authStore";
 import { useNavigate } from "react-router-dom";
-import { Pencil } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 
 const Tools = () => {
   const navigate = useNavigate();
@@ -37,6 +45,13 @@ const Tools = () => {
   const [localAllowedTools, setLocalAllowedTools] = useState(
     user?.allowed_tools || []
   );
+  const [viewMode, setViewMode] = useState("grid"); // "grid", "list", "compact"
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterPermission, setFilterPermission] = useState("all");
+  const [expandedTools, setExpandedTools] = useState(new Set());
+  const [showPermissions, setShowPermissions] = useState(false);
+  const [builtInToolsExpanded, setBuiltInToolsExpanded] = useState(true);
+  const [customToolsExpanded, setCustomToolsExpanded] = useState(true);
 
   // Use local state that we control directly
   const userAllowedTools = localAllowedTools;
@@ -226,423 +241,549 @@ const Tools = () => {
     }
   };
 
+  const toggleToolExpansion = (toolName) => {
+    const newExpanded = new Set(expandedTools);
+    if (newExpanded.has(toolName)) {
+      newExpanded.delete(toolName);
+    } else {
+      newExpanded.add(toolName);
+    }
+    setExpandedTools(newExpanded);
+  };
+
+  // Filter tools based on search and permission filter
+  const filteredTools = tools.filter((tool) => {
+    const matchesSearch =
+      tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tool.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesPermission =
+      filterPermission === "all" || tool.permission === filterPermission;
+    return matchesSearch && matchesPermission;
+  });
+
+  const filteredCustomTools = customTools.filter((tool) => {
+    const matchesSearch =
+      tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tool.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tool.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesPermission =
+      filterPermission === "all" || tool.permission_level === filterPermission;
+    return matchesSearch && matchesPermission;
+  });
+
+  // Tool card component for reuse
+  const ToolCard = ({ tool, isCustom = false, viewMode }) => {
+    const isEnabled = userAllowedTools.includes(tool.name);
+    const toolName = isCustom ? tool.display_name : tool.name;
+    const toolDescription = tool.description;
+    const permission = isCustom ? tool.permission_level : tool.permission;
+    const parameters = isCustom ? tool.parameters_schema : tool.parameters;
+    const isExpanded = expandedTools.has(tool.name);
+    const hasParams =
+      parameters?.properties && Object.keys(parameters.properties).length > 0;
+
+    if (viewMode === "compact") {
+      return (
+        <div className="flex items-center justify-between p-2 rounded-lg bg-gray-800/30 border border-gray-700/30 hover:bg-gray-800/50 transition-all">
+          <div className="flex items-center space-x-2 flex-1 min-w-0">
+            <div className="text-primary-400 flex-shrink-0">
+              {getToolIcon(tool.name)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-medium text-white truncate">
+                {toolName}
+              </h3>
+            </div>
+            {isCustom && (
+              <span className="px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded border border-purple-500/30 flex-shrink-0">
+                Custom
+              </span>
+            )}
+            <span
+              className={`px-1.5 py-0.5 text-xs rounded border flex-shrink-0 ${getPermissionColor(
+                permission
+              )}`}
+            >
+              {permission.replace("_", " ")}
+            </span>
+          </div>
+          <button
+            onClick={() => toggleTool(tool.name, isEnabled, isCustom)}
+            disabled={togglingTool === tool.name}
+            className={`ml-2 px-2 py-1 rounded text-xs transition-all ${
+              isEnabled
+                ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                : "bg-gray-700/50 text-gray-400 border border-gray-600/50"
+            }`}
+          >
+            {isEnabled ? "ON" : "OFF"}
+          </button>
+        </div>
+      );
+    }
+
+    if (viewMode === "grid") {
+      return (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="p-4 rounded-lg bg-gray-800/30 border border-gray-700/30 hover:bg-gray-800/50 hover:border-gray-700/50 transition-all"
+        >
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex items-center space-x-2 flex-1 min-w-0">
+              <div className="text-primary-400 flex-shrink-0">
+                {getToolIcon(tool.name)}
+              </div>
+              <h3 className="text-sm font-semibold text-white truncate">
+                {toolName}
+              </h3>
+              {isCustom && (
+                <span className="px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded border border-purple-500/30 flex-shrink-0">
+                  Custom
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => toggleTool(tool.name, isEnabled, isCustom)}
+              disabled={togglingTool === tool.name}
+              className={`px-2 py-1 rounded text-xs transition-all flex-shrink-0 ${
+                isEnabled
+                  ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                  : "bg-gray-700/50 text-gray-400 border border-gray-600/50"
+              }`}
+            >
+              {isEnabled ? (
+                <CheckCircle className="w-3 h-3" />
+              ) : (
+                <XCircle className="w-3 h-3" />
+              )}
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mb-2 line-clamp-2">
+            {toolDescription}
+          </p>
+          <div className="flex items-center justify-between">
+            <span
+              className={`px-2 py-0.5 text-xs rounded border ${getPermissionColor(
+                permission
+              )}`}
+            >
+              {permission.replace("_", " ")}
+            </span>
+            {hasParams && (
+              <button
+                onClick={() => toggleToolExpansion(tool.name)}
+                className="text-xs text-gray-500 hover:text-gray-400"
+              >
+                {isExpanded ? (
+                  <ChevronUp className="w-3 h-3" />
+                ) : (
+                  <ChevronDown className="w-3 h-3" />
+                )}
+              </button>
+            )}
+          </div>
+          {isExpanded && hasParams && (
+            <div className="mt-2 pt-2 border-t border-gray-700/30">
+              <div className="space-y-1">
+                {Object.entries(parameters.properties)
+                  .slice(0, 3)
+                  .map(([param, spec]) => (
+                    <div key={param} className="text-xs">
+                      <span className="text-primary-400 font-mono">
+                        {param}
+                      </span>
+                      <span className="text-gray-500 mx-1">:</span>
+                      <span className="text-gray-400">{spec.type}</span>
+                      {parameters.required?.includes(param) && (
+                        <span className="text-yellow-400 ml-1">*</span>
+                      )}
+                    </div>
+                  ))}
+                {Object.keys(parameters.properties).length > 3 && (
+                  <p className="text-xs text-gray-500">
+                    +{Object.keys(parameters.properties).length - 3} more
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          {isCustom && (
+            <div className="mt-2 pt-2 border-t border-gray-700/30 flex space-x-1">
+              <button
+                onClick={() => navigate(`/edit-tool/${tool.id}`)}
+                className="flex-1 px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded border border-blue-500/30 hover:bg-blue-500/30"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => deleteCustomTool(tool)}
+                disabled={deletingToolId === tool.id}
+                className="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded border border-red-500/30 hover:bg-red-500/30"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </motion.div>
+      );
+    }
+
+    // List view (original detailed view but more compact)
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: -10 }}
+        animate={{ opacity: 1, x: 0 }}
+        className="p-3 rounded-lg bg-gray-800/30 border border-gray-700/30 hover:bg-gray-800/50 transition-all"
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-start space-x-3 flex-1">
+            <div className="text-primary-400 mt-0.5 flex-shrink-0">
+              {getToolIcon(tool.name)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center space-x-2 mb-1">
+                <h3 className="text-sm font-semibold text-white">{toolName}</h3>
+                {isCustom && (
+                  <span className="px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded border border-purple-500/30">
+                    Custom
+                  </span>
+                )}
+                <span
+                  className={`px-1.5 py-0.5 text-xs rounded border ${getPermissionColor(
+                    permission
+                  )}`}
+                >
+                  {permission.replace("_", " ")}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mb-2">{toolDescription}</p>
+              {isExpanded && hasParams && (
+                <div className="mt-2 p-2 bg-gray-900/50 rounded text-xs">
+                  {Object.entries(parameters.properties).map(
+                    ([param, spec]) => (
+                      <div key={param} className="flex items-center">
+                        <span className="text-primary-400 font-mono">
+                          {param}
+                        </span>
+                        <span className="text-gray-500 mx-1">:</span>
+                        <span className="text-gray-400">{spec.type}</span>
+                        {parameters.required?.includes(param) && (
+                          <span className="text-yellow-400 ml-1">*</span>
+                        )}
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+              {hasParams && (
+                <button
+                  onClick={() => toggleToolExpansion(tool.name)}
+                  className="text-xs text-gray-500 hover:text-gray-400 mt-1"
+                >
+                  {isExpanded ? "Hide" : "Show"} parameters
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2 flex-shrink-0">
+            {isCustom && (
+              <>
+                <button
+                  onClick={() => navigate(`/edit-tool/${tool.id}`)}
+                  className="p-1.5 text-blue-400 hover:bg-blue-500/20 rounded"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => deleteCustomTool(tool)}
+                  disabled={deletingToolId === tool.id}
+                  className="p-1.5 text-red-400 hover:bg-red-500/20 rounded"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => toggleTool(tool.name, isEnabled, isCustom)}
+              disabled={togglingTool === tool.name}
+              className={`px-3 py-1.5 rounded text-xs transition-all ${
+                isEnabled
+                  ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                  : "bg-gray-700/50 text-gray-400 border border-gray-600/50"
+              }`}
+            >
+              {isEnabled ? "Enabled" : "Disabled"}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  };
+
   return (
     <div className="h-full overflow-y-auto custom-scrollbar">
-      <div className="max-w-6xl mx-auto p-6">
-        {/* Header */}
-        <div className="mb-8 flex items-start justify-between">
+      <div className="max-w-7xl mx-auto p-4">
+        {/* Minimal Header */}
+        <div className="mb-4 flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2">
-              Tools & Permissions
-            </h1>
-            <p className="text-gray-400">
-              Manage which tools the AI agent can use and their permissions
+            <h1 className="text-2xl font-bold text-white">Tools</h1>
+            <p className="text-sm text-gray-400 mt-0.5">
+              {filteredTools.length + filteredCustomTools.length} tools
+              available
             </p>
           </div>
-
-          <div className="flex space-x-3">
-            {/* Create Custom Tool button */}
+          <div className="flex items-center space-x-2">
             <button
               onClick={() => navigate("/add-tool")}
-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-primary-500 to-primary-600 text-white hover:from-primary-600 hover:to-primary-700 transition-all duration-200 flex items-center space-x-2"
+              className="px-3 py-1.5 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-all text-sm flex items-center space-x-1.5"
             >
               <Plus className="w-4 h-4" />
-              <span className="text-sm font-medium">Create Tool</span>
-            </button>
-
-            {/* Debug refresh button */}
-            <button
-              onClick={async () => {
-                console.log("Manual refresh clicked");
-                const updatedUser = await refreshUserData();
-                if (updatedUser?.allowed_tools) {
-                  setLocalAllowedTools([...updatedUser.allowed_tools]);
-                }
-                await loadCustomTools(); // Also refresh custom tools
-                setForceUpdate((prev) => prev + 1);
-                toast.success("Data refreshed");
-              }}
-              className="px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-all duration-200"
-            >
-              <div className="flex items-center space-x-2">
-                <Search className="w-4 h-4" />
-                <span className="text-sm">Refresh</span>
-              </div>
+              <span>New</span>
             </button>
           </div>
         </div>
 
-        {/* Available tools */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass-dark rounded-xl p-6"
-        >
-          <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
-            <Wrench className="w-5 h-5 mr-2 text-primary-400" />
-            Available Tools
-          </h2>
-
-          {isLoading ? (
-            <div className="text-center py-8">
-              <div className="loading-dots">
-                <span />
-                <span />
-                <span />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {tools.map((tool) => {
-                const isEnabled = userAllowedTools.includes(tool.name);
-                console.log(
-                  `Tool ${tool.name}: isEnabled=${isEnabled}, userAllowedTools:`,
-                  userAllowedTools,
-                  `user.allowed_tools:`,
-                  user?.allowed_tools
-                );
-
-                return (
-                  <motion.div
-                    key={`${tool.name}-${forceUpdate}-${isEnabled}`}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    whileHover={{ x: 4 }}
-                    className="p-4 bg-gray-800/50 rounded-lg border border-gray-700/50 hover:bg-gray-800/70 transition-all duration-200"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-3 flex-1">
-                        <div className="text-primary-400 mt-1">
-                          {getToolIcon(tool.name)}
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-white">
-                            {tool.name}
-                          </h3>
-                          <p className="text-sm text-gray-400 mt-1">
-                            {tool.description}
-                          </p>
-
-                          {/* Permission badge */}
-                          <div className="mt-2">
-                            <span
-                              className={`inline-flex px-2 py-1 text-xs rounded-full border ${getPermissionColor(
-                                tool.permission
-                              )}`}
-                            >
-                              {tool.permission.replace("_", " ")}
-                            </span>
-                          </div>
-
-                          {/* Parameters */}
-                          {tool.parameters?.properties && (
-                            <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-                              <p className="text-xs font-medium text-gray-400 mb-2">
-                                Parameters:
-                              </p>
-                              <div className="space-y-1">
-                                {Object.entries(tool.parameters.properties).map(
-                                  ([param, spec]) => (
-                                    <div
-                                      key={param}
-                                      className="flex items-start text-xs"
-                                    >
-                                      <span className="text-primary-400 font-mono">
-                                        {param}
-                                      </span>
-                                      <span className="text-gray-500 mx-1">
-                                        :
-                                      </span>
-                                      <span className="text-gray-400">
-                                        {spec.type}
-                                        {tool.parameters.required?.includes(
-                                          param
-                                        ) && (
-                                          <span className="text-yellow-400 ml-1">
-                                            *
-                                          </span>
-                                        )}
-                                      </span>
-                                    </div>
-                                  )
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Enable/Disable toggle */}
-                      <button
-                        onClick={() => toggleTool(tool.name, isEnabled, false)}
-                        disabled={togglingTool === tool.name}
-                        className={`px-4 py-2 rounded-lg transition-all duration-200 ${
-                          togglingTool === tool.name
-                            ? "bg-gray-700/50 text-gray-500 border border-gray-600/50 cursor-not-allowed"
-                            : isEnabled
-                            ? "bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30"
-                            : "bg-gray-700/50 text-gray-400 border border-gray-600/50 hover:bg-gray-700/70"
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2">
-                          {togglingTool === tool.name ? (
-                            <>
-                              <div className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                              <span>Updating...</span>
-                            </>
-                          ) : isEnabled ? (
-                            <>
-                              <CheckCircle className="w-4 h-4" />
-                              <span>Enabled</span>
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="w-4 h-4" />
-                              <span>Disabled</span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-        </motion.div>
-
-        {/* Custom Tools */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="glass-dark rounded-xl p-6 mt-8"
-        >
-          <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
-            <Plus className="w-5 h-5 mr-2 text-primary-400" />
-            Custom Tools
-          </h2>
-
-          {isLoadingCustomTools ? (
-            <div className="text-center py-8">
-              <div className="loading-dots">
-                <span />
-                <span />
-                <span />
-              </div>
-            </div>
-          ) : customTools.length === 0 ? (
-            <div className="text-center py-8 text-gray-400">
-              <Plus className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>No custom tools created yet</p>
-              <p className="text-sm">
-                Click "Create Tool" to build your own AI tools
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {customTools.map((customTool) => {
-                const isEnabled = userAllowedTools.includes(customTool.name);
-
-                return (
-                  <motion.div
-                    key={`custom-${customTool.name}-${forceUpdate}-${isEnabled}`}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    whileHover={{ x: 4 }}
-                    className="p-4 bg-gray-800/50 rounded-lg border border-gray-700/50 hover:bg-gray-800/70 transition-all duration-200"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-3 flex-1">
-                        <div className="text-primary-400 mt-1">
-                          <Plus className="w-5 h-5" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-2 mb-1">
-                            <h3 className="font-semibold text-white">
-                              {customTool.display_name}
-                            </h3>
-                            <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full border border-purple-500/30">
-                              Custom
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-400 mb-2">
-                            {customTool.description}
-                          </p>
-
-                          {/* Permission badge */}
-                          <div className="mb-2">
-                            <span
-                              className={`inline-flex px-2 py-1 text-xs rounded-full border ${getPermissionColor(
-                                customTool.permission_level
-                              )}`}
-                            >
-                              {customTool.permission_level.replace("_", " ")}
-                            </span>
-                          </div>
-
-                          {/* Parameters */}
-                          {customTool.parameters_schema?.properties &&
-                            Object.keys(customTool.parameters_schema.properties)
-                              .length > 0 && (
-                              <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
-                                <p className="text-xs font-medium text-gray-400 mb-2">
-                                  Parameters:
-                                </p>
-                                <div className="space-y-1">
-                                  {Object.entries(
-                                    customTool.parameters_schema.properties
-                                  ).map(([param, spec]) => (
-                                    <div
-                                      key={param}
-                                      className="flex items-start text-xs"
-                                    >
-                                      <span className="text-primary-400 font-mono">
-                                        {param}
-                                      </span>
-                                      <span className="text-gray-500 mx-1">
-                                        :
-                                      </span>
-                                      <span className="text-gray-400">
-                                        {spec.type}
-                                        {customTool.parameters_schema.required?.includes(
-                                          param
-                                        ) && (
-                                          <span className="text-yellow-400 ml-1">
-                                            *
-                                          </span>
-                                        )}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        {/* Edit custom tool */}
-                        <button
-                          onClick={() =>
-                            navigate(`/edit-tool/${customTool.id}`)
-                          }
-                          className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-all duration-200 flex items-center space-x-1"
-                        >
-                          <Pencil className="w-4 h-4" />
-                          <span>Edit</span>
-                        </button>
-
-                        {/* Remove custom tool */}
-                        <button
-                          onClick={() => deleteCustomTool(customTool)}
-                          disabled={deletingToolId === customTool.id}
-                          className={`px-3 py-2 rounded-lg border transition-all duration-200 flex items-center space-x-1 ${
-                            deletingToolId === customTool.id
-                              ? "bg-gray-700/50 text-gray-500 border-gray-600/50 cursor-not-allowed"
-                              : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
-                          }`}
-                        >
-                          <span className="w-4 h-4 inline-block">🗑️</span>
-                          <span>
-                            {deletingToolId === customTool.id
-                              ? "Removing..."
-                              : "Remove"}
-                          </span>
-                        </button>
-
-                        {/* Enable/Disable toggle */}
-                        <button
-                          onClick={() =>
-                            toggleTool(customTool.name, isEnabled, true)
-                          }
-                          disabled={togglingTool === customTool.name}
-                          className={`px-4 py-2 rounded-lg transition-all duration-200 ${
-                            togglingTool === customTool.name
-                              ? "bg-gray-700/50 text-gray-500 border border-gray-600/50 cursor-not-allowed"
-                              : isEnabled
-                              ? "bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30"
-                              : "bg-gray-700/50 text-gray-400 border border-gray-600/50 hover:bg-gray-700/70"
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2">
-                            {togglingTool === customTool.name ? (
-                              <>
-                                <div className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                                <span>Updating...</span>
-                              </>
-                            ) : isEnabled ? (
-                              <>
-                                <CheckCircle className="w-4 h-4" />
-                                <span>Enabled</span>
-                              </>
-                            ) : (
-                              <>
-                                <XCircle className="w-4 h-4" />
-                                <span>Disabled</span>
-                              </>
-                            )}
-                          </div>
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-        </motion.div>
-
-        {/* Info note */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="mt-8 p-4 bg-primary-500/10 border border-primary-500/30 rounded-lg"
-        >
-          <div className="flex items-start space-x-3">
-            <Info className="w-5 h-5 text-primary-400 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-primary-300">
-              <p className="font-medium mb-1">About Tool Permissions</p>
-              <p className="opacity-90">
-                Tools are only executed after your explicit approval during
-                conversations. Enabling a tool here allows the AI to suggest
-                using it, but you'll always have the final say on whether it
-                actually runs.
-              </p>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Permission levels */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="glass-dark rounded-xl p-6 mt-8"
-        >
-          <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
-            <Shield className="w-5 h-5 mr-2 text-primary-400" />
-            Permission Levels
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {permissions.map((perm) => (
-              <div
-                key={perm.name}
-                className={`p-3 rounded-lg border ${getPermissionColor(
-                  perm.name
-                )}`}
+        {/* Controls Bar */}
+        <div className="mb-4 flex items-center justify-between gap-3">
+          {/* Search */}
+          <div className="flex-1 relative">
+            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search tools..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-gray-800/50 border border-gray-700/50 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
               >
-                <p className="font-medium">
-                  {perm.name.replace("_", " ").toUpperCase()}
-                </p>
-                <p className="text-xs opacity-80 mt-1">{perm.description}</p>
-              </div>
-            ))}
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
-        </motion.div>
+
+          {/* Filter */}
+          <select
+            value={filterPermission}
+            onChange={(e) => setFilterPermission(e.target.value)}
+            className="px-3 py-1.5 rounded-lg bg-gray-800/50 border border-gray-700/50 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+          >
+            <option value="all">All Permissions</option>
+            {permissions.map((perm) => (
+              <option key={perm.name} value={perm.name}>
+                {perm.name.replace("_", " ")}
+              </option>
+            ))}
+          </select>
+
+          {/* View Toggle */}
+          <div className="flex items-center space-x-1 bg-gray-800/50 rounded-lg p-1 border border-gray-700/50">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`p-1.5 rounded transition-all ${
+                viewMode === "grid"
+                  ? "bg-primary-500/20 text-primary-400"
+                  : "text-gray-400 hover:text-white"
+              }`}
+              title="Grid View"
+            >
+              <Grid3x3 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={`p-1.5 rounded transition-all ${
+                viewMode === "list"
+                  ? "bg-primary-500/20 text-primary-400"
+                  : "text-gray-400 hover:text-white"
+              }`}
+              title="List View"
+            >
+              <List className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode("compact")}
+              className={`p-1.5 rounded transition-all ${
+                viewMode === "compact"
+                  ? "bg-primary-500/20 text-primary-400"
+                  : "text-gray-400 hover:text-white"
+              }`}
+              title="Compact View"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Loading State */}
+        {isLoading || isLoadingCustomTools ? (
+          <div className="text-center py-12">
+            <div className="loading-dots">
+              <span />
+              <span />
+              <span />
+            </div>
+            <p className="text-sm text-gray-400 mt-3">Loading tools...</p>
+          </div>
+        ) : (
+          <>
+            {/* Built-in Tools */}
+            {filteredTools.length > 0 && (
+              <div className="mb-6">
+                <button
+                  onClick={() => setBuiltInToolsExpanded(!builtInToolsExpanded)}
+                  className="flex items-center space-x-2 mb-3 hover:opacity-80 transition-opacity"
+                >
+                  <ChevronRight
+                    className={`w-4 h-4 text-gray-400 transition-transform ${
+                      builtInToolsExpanded ? "rotate-90" : ""
+                    }`}
+                  />
+                  <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+                    Built-in Tools ({filteredTools.length})
+                  </h2>
+                </button>
+                {builtInToolsExpanded && (
+                  <>
+                    {viewMode === "grid" ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                        {filteredTools.map((tool) => (
+                          <ToolCard
+                            key={tool.name}
+                            tool={tool}
+                            viewMode={viewMode}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {filteredTools.map((tool) => (
+                          <ToolCard
+                            key={tool.name}
+                            tool={tool}
+                            viewMode={viewMode}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Custom Tools */}
+            {filteredCustomTools.length > 0 && (
+              <div className="mb-6">
+                <button
+                  onClick={() => setCustomToolsExpanded(!customToolsExpanded)}
+                  className="flex items-center space-x-2 mb-3 hover:opacity-80 transition-opacity"
+                >
+                  <ChevronRight
+                    className={`w-4 h-4 text-gray-400 transition-transform ${
+                      customToolsExpanded ? "rotate-90" : ""
+                    }`}
+                  />
+                  <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+                    Custom Tools ({filteredCustomTools.length})
+                  </h2>
+                </button>
+                {customToolsExpanded && (
+                  <>
+                    {viewMode === "grid" ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                        {filteredCustomTools.map((tool) => (
+                          <ToolCard
+                            key={tool.id}
+                            tool={tool}
+                            isCustom={true}
+                            viewMode={viewMode}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {filteredCustomTools.map((tool) => (
+                          <ToolCard
+                            key={tool.id}
+                            tool={tool}
+                            isCustom={true}
+                            viewMode={viewMode}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Empty State */}
+            {filteredTools.length === 0 && filteredCustomTools.length === 0 && (
+              <div className="text-center py-12 text-gray-400">
+                <Wrench className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>No tools found</p>
+                {searchQuery && (
+                  <p className="text-sm mt-1">
+                    Try adjusting your search or filters
+                  </p>
+                )}
+                {!searchQuery && customTools.length === 0 && (
+                  <button
+                    onClick={() => navigate("/add-tool")}
+                    className="mt-4 px-4 py-2 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-all text-sm"
+                  >
+                    Create Your First Tool
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Permissions Section - Collapsible */}
+        <div className="mt-6">
+          <button
+            onClick={() => setShowPermissions(!showPermissions)}
+            className="flex items-center justify-between w-full p-3 rounded-lg bg-gray-800/30 border border-gray-700/30 hover:bg-gray-800/50 transition-all"
+          >
+            <div className="flex items-center space-x-2">
+              <Shield className="w-4 h-4 text-gray-400" />
+              <span className="text-sm font-medium text-gray-300">
+                Permission Levels
+              </span>
+            </div>
+            {showPermissions ? (
+              <ChevronUp className="w-4 h-4 text-gray-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-gray-400" />
+            )}
+          </button>
+          {showPermissions && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2"
+            >
+              {permissions.map((perm) => (
+                <div
+                  key={perm.name}
+                  className={`p-2 rounded border text-xs ${getPermissionColor(
+                    perm.name
+                  )}`}
+                >
+                  <p className="font-medium">
+                    {perm.name.replace("_", " ").toUpperCase()}
+                  </p>
+                  <p className="opacity-80 mt-0.5">{perm.description}</p>
+                </div>
+              ))}
+            </motion.div>
+          )}
+        </div>
       </div>
     </div>
   );
