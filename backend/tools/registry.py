@@ -250,7 +250,7 @@ class ToolRegistry:
             allowed_prefixes = {"backend.tools.base"}
             # Expand allowlist based on permission
             if permission in {ToolPermission.NETWORK, ToolPermission.WEB_ACCESS}:
-                allowed_modules.update({"urllib", "urllib.parse", "httpx", "requests"})
+                allowed_modules.update({"urllib", "urllib.parse", "httpx", "requests", "wikipedia"})
             if permission in {ToolPermission.DATABASE_READ, ToolPermission.DATABASE_WRITE}:
                 allowed_modules.update({"sqlite3"})
 
