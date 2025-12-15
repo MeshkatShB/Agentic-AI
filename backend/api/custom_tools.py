@@ -241,6 +241,7 @@ async def update_custom_tool(
         setattr(tool, field, value)
     
     db.commit()
+    
     db.refresh(tool)
     
     logger.info(f"User {current_user.username} updated custom tool: {tool.name}")
@@ -413,6 +414,15 @@ TOOL CREATION BEST PRACTICES (based on LangChain documentation):
 4. Handle errors gracefully with try-except blocks
 5. The code should be production-ready and well-commented
 
+CREDENTIALS AND AUTHENTICATION (CRITICAL):
+- If your tool requires authentication (API keys, tokens, etc.), the user will provide these in the description (e.g., "api_key=xxx" or "here is my api_key: xxx")
+- Credentials should be extracted from environment variables using `os.getenv()`
+- The user may mention credentials in the description, but you should instruct them to set environment variables
+- Check for credentials like this: `import os; api_key = os.getenv("GOOGLE_DRIVE_API_KEY")` or `api_key = os.getenv("API_KEY")`
+- If credentials are missing, return a clear error: `return ToolResult(success=False, error="API key not found. Please set GOOGLE_DRIVE_API_KEY environment variable.")`
+- The tool code should REAL connect to the actual service (Google Drive, etc.) using environment variables - do NOT create mock implementations
+- DO NOT hardcode credentials in the tool code - always use environment variables
+
 PARAMETER SCHEMA REQUIREMENTS (LangChain pattern):
 - The parameters_schema MUST be a valid JSON Schema object
 - Each parameter should have: type, description, and optionally default
@@ -463,6 +473,9 @@ OUTPUT FORMAT - RETURN ONLY THIS JSON STRUCTURE (NO OTHER TEXT):
 
 REMEMBER: Return ONLY the JSON object. Start with { and end with }. No markdown, no code blocks, no explanations."""
 
+        # Use description as-is - credentials should be in environment variables
+        description_text = request.description
+        
         # Determine allowed modules based on permission level
         allowed_modules_note = "Allowed modules: math, random, re, json, time, datetime, uuid, base64, hashlib, typing, asyncio"
         if request.permission_level in ["network", "web_access"]:
@@ -472,7 +485,7 @@ REMEMBER: Return ONLY the JSON object. Start with { and end with }. No markdown,
         
         user_prompt = f"""Generate a custom AI tool based on this description:
 
-{request.description}
+{description_text}
 
 Permission level: {request.permission_level}
 {allowed_modules_note}
