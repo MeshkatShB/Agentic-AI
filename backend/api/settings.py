@@ -344,3 +344,182 @@ async def update_api_config(
     )
     
     return APIConfigSettings(**response_dict)
+
+
+@router.get("/api-models/{provider}")
+async def get_provider_models(
+    provider: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get available models for a specific provider."""
+    import httpx
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    prefs = current_user.preferences or {}
+    api_config = prefs.get("api_config", {})
+    
+    # Get API key and endpoint from user config or environment
+    from backend.config import settings as app_settings
+    
+    def get_api_key(key_name: str, env_key: str) -> Optional[str]:
+        user_key = api_config.get(key_name)
+        if user_key:
+            return user_key
+        return getattr(app_settings, env_key, None)
+    
+    try:
+        if provider == "openai":
+            api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
+            api_endpoint = api_config.get("openai_api_endpoint", "https://api.openai.com/v1")
+            
+            if not api_key:
+                return {
+                    "error": "OpenAI API key not configured. Please set it in API Configuration.",
+                    "models": []
+                }
+            
+            # Fetch models from OpenAI API
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{api_endpoint}/models",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Filter for chat models (gpt-* models)
+                    models = [
+                        model["id"] for model in data.get("data", [])
+                        if model["id"].startswith("gpt-") or model["id"].startswith("o1-")
+                    ]
+                    # Sort models (newer first, then alphabetically)
+                    models.sort(reverse=True)
+                    return {"models": models, "error": None}
+                else:
+                    return {
+                        "error": f"Failed to fetch models: {response.text}",
+                        "models": []
+                    }
+        
+        elif provider == "deepseek":
+            api_key = get_api_key("deepseek_api_key", "DEEPSEEK_API_KEY")
+            api_endpoint = api_config.get("deepseek_api_endpoint", "https://api.deepseek.com/v1")
+            
+            if not api_key:
+                return {
+                    "error": "DeepSeek API key not configured. Please set it in API Configuration.",
+                    "models": []
+                }
+            
+            # DeepSeek uses OpenAI-compatible API
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{api_endpoint}/models",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    models = [
+                        model["id"] for model in data.get("data", [])
+                        if "deepseek" in model["id"].lower()
+                    ]
+                    models.sort(reverse=True)
+                    return {"models": models, "error": None}
+                else:
+                    return {
+                        "error": f"Failed to fetch models: {response.text}",
+                        "models": []
+                    }
+        
+        elif provider == "mistral":
+            api_key = get_api_key("mistral_api_key", "MISTRAL_API_KEY")
+            api_endpoint = api_config.get("mistral_api_endpoint", "https://api.mistral.ai/v1")
+            
+            if not api_key:
+                return {
+                    "error": "Mistral API key not configured. Please set it in API Configuration.",
+                    "models": []
+                }
+            
+            # Mistral uses OpenAI-compatible API
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{api_endpoint}/models",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    models = [
+                        model["id"] for model in data.get("data", [])
+                        if "mistral" in model["id"].lower()
+                    ]
+                    models.sort(reverse=True)
+                    return {"models": models, "error": None}
+                else:
+                    return {
+                        "error": f"Failed to fetch models: {response.text}",
+                        "models": []
+                    }
+        
+        elif provider == "gemini":
+            api_key = get_api_key("gemini_api_key", "GEMINI_API_KEY")
+            
+            if not api_key:
+                return {
+                    "error": "Gemini API key not configured. Please set it in API Configuration.",
+                    "models": []
+                }
+            
+            # Google Gemini uses a different API endpoint
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1/models?key={api_key}"
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Filter for chat models
+                    models = [
+                        model["name"].replace("models/", "") 
+                        for model in data.get("models", [])
+                        if "generateContent" in model.get("supportedGenerationMethods", [])
+                    ]
+                    models.sort(reverse=True)
+                    return {"models": models, "error": None}
+                else:
+                    return {
+                        "error": f"Failed to fetch models: {response.text}",
+                        "models": []
+                    }
+        
+        else:
+            return {
+                "error": f"Unknown provider: {provider}",
+                "models": []
+            }
+    
+    except httpx.TimeoutException:
+        logger.error(f"Timeout fetching models for {provider}")
+        return {
+            "error": "Request timeout. Please check your API endpoint and try again.",
+            "models": []
+        }
+    except Exception as e:
+        logger.error(f"Error fetching models for {provider}: {e}", exc_info=True)
+        return {
+            "error": f"Failed to fetch models: {str(e)}",
+            "models": []
+        }
