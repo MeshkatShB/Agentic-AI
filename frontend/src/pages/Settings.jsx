@@ -74,12 +74,37 @@ const Settings = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState("checking");
+  const [availableModels, setAvailableModels] = useState({
+    openai: [],
+    deepseek: [],
+    mistral: [],
+    gemini: [],
+  });
+  const [modelLoading, setModelLoading] = useState({
+    openai: false,
+    deepseek: false,
+    mistral: false,
+    gemini: false,
+  });
 
   useEffect(() => {
     loadSettings();
     loadApiConfig();
     checkOllamaStatus();
   }, []);
+
+  // Fetch available models when API config changes or when provider is selected
+  useEffect(() => {
+    if (apiConfig.llm_provider && apiConfig.llm_provider !== "ollama") {
+      fetchProviderModels(apiConfig.llm_provider);
+    }
+  }, [
+    apiConfig.llm_provider,
+    apiConfig.openai_api_key,
+    apiConfig.deepseek_api_key,
+    apiConfig.mistral_api_key,
+    apiConfig.gemini_api_key,
+  ]);
 
   const loadSettings = async () => {
     try {
@@ -114,6 +139,39 @@ const Settings = () => {
       setOllamaStatus(response.data.status);
     } catch (error) {
       setOllamaStatus("error");
+    }
+  };
+
+  const fetchProviderModels = async (provider) => {
+    // Check if API key is available for this provider
+    const apiKeyField = `${provider}_api_key`;
+    if (!apiConfig[apiKeyField]) {
+      setAvailableModels((prev) => ({ ...prev, [provider]: [] }));
+      return;
+    }
+
+    setModelLoading((prev) => ({ ...prev, [provider]: true }));
+    try {
+      const response = await axios.get(`/settings/api-models/${provider}`);
+      if (response.data.models && response.data.models.length > 0) {
+        setAvailableModels((prev) => ({
+          ...prev,
+          [provider]: response.data.models,
+        }));
+      } else {
+        setAvailableModels((prev) => ({ ...prev, [provider]: [] }));
+        if (response.data.error) {
+          console.warn(
+            `Failed to fetch ${provider} models:`,
+            response.data.error
+          );
+        }
+      }
+    } catch (error) {
+      console.error(`Error fetching ${provider} models:`, error);
+      setAvailableModels((prev) => ({ ...prev, [provider]: [] }));
+    } finally {
+      setModelLoading((prev) => ({ ...prev, [provider]: false }));
     }
   };
 
@@ -485,9 +543,22 @@ const Settings = () => {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Model
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-medium text-gray-300">
+                            Model
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => fetchProviderModels("openai")}
+                            disabled={
+                              modelLoading.openai || !apiConfig.openai_api_key
+                            }
+                            className="text-xs text-primary-400 hover:text-primary-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                            title="Refresh available models"
+                          >
+                            {modelLoading.openai ? "Loading..." : "🔄 Refresh"}
+                          </button>
+                        </div>
                         <select
                           value={apiConfig.openai_model}
                           onChange={(e) =>
@@ -497,38 +568,60 @@ const Settings = () => {
                             })
                           }
                           className="input-glass text-white w-full"
+                          disabled={modelLoading.openai}
                         >
-                          <option
-                            value="gpt-4o-mini"
-                            className="bg-gray-800 text-white"
-                          >
-                            gpt-4o-mini
-                          </option>
-                          <option
-                            value="gpt-4o"
-                            className="bg-gray-800 text-white"
-                          >
-                            gpt-4o
-                          </option>
-                          <option
-                            value="gpt-4-turbo"
-                            className="bg-gray-800 text-white"
-                          >
-                            gpt-4-turbo
-                          </option>
-                          <option
-                            value="gpt-4"
-                            className="bg-gray-800 text-white"
-                          >
-                            gpt-4
-                          </option>
-                          <option
-                            value="gpt-3.5-turbo"
-                            className="bg-gray-800 text-white"
-                          >
-                            gpt-3.5-turbo
-                          </option>
+                          {availableModels.openai.length > 0 ? (
+                            availableModels.openai.map((model) => (
+                              <option
+                                key={model}
+                                value={model}
+                                className="bg-gray-800 text-white"
+                              >
+                                {model}
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option
+                                value="gpt-4o-mini"
+                                className="bg-gray-800 text-white"
+                              >
+                                gpt-4o-mini (default)
+                              </option>
+                              <option
+                                value="gpt-4o"
+                                className="bg-gray-800 text-white"
+                              >
+                                gpt-4o
+                              </option>
+                              <option
+                                value="gpt-4-turbo"
+                                className="bg-gray-800 text-white"
+                              >
+                                gpt-4-turbo
+                              </option>
+                              <option
+                                value="gpt-4"
+                                className="bg-gray-800 text-white"
+                              >
+                                gpt-4
+                              </option>
+                              <option
+                                value="gpt-3.5-turbo"
+                                className="bg-gray-800 text-white"
+                              >
+                                gpt-3.5-turbo
+                              </option>
+                            </>
+                          )}
                         </select>
+                        {availableModels.openai.length === 0 &&
+                          apiConfig.openai_api_key && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              Click "Refresh" to load available models from
+                              OpenAI
+                            </p>
+                          )}
                       </div>
                     </div>
                   )}
@@ -603,9 +696,25 @@ const Settings = () => {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Model
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-medium text-gray-300">
+                            Model
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => fetchProviderModels("deepseek")}
+                            disabled={
+                              modelLoading.deepseek ||
+                              !apiConfig.deepseek_api_key
+                            }
+                            className="text-xs text-primary-400 hover:text-primary-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                            title="Refresh available models"
+                          >
+                            {modelLoading.deepseek
+                              ? "Loading..."
+                              : "🔄 Refresh"}
+                          </button>
+                        </div>
                         <select
                           value={apiConfig.deepseek_model}
                           onChange={(e) =>
@@ -615,20 +724,42 @@ const Settings = () => {
                             })
                           }
                           className="input-glass text-white w-full"
+                          disabled={modelLoading.deepseek}
                         >
-                          <option
-                            value="deepseek-chat"
-                            className="bg-gray-800 text-white"
-                          >
-                            deepseek-chat
-                          </option>
-                          <option
-                            value="deepseek-coder"
-                            className="bg-gray-800 text-white"
-                          >
-                            deepseek-coder
-                          </option>
+                          {availableModels.deepseek.length > 0 ? (
+                            availableModels.deepseek.map((model) => (
+                              <option
+                                key={model}
+                                value={model}
+                                className="bg-gray-800 text-white"
+                              >
+                                {model}
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option
+                                value="deepseek-chat"
+                                className="bg-gray-800 text-white"
+                              >
+                                deepseek-chat (default)
+                              </option>
+                              <option
+                                value="deepseek-coder"
+                                className="bg-gray-800 text-white"
+                              >
+                                deepseek-coder
+                              </option>
+                            </>
+                          )}
                         </select>
+                        {availableModels.deepseek.length === 0 &&
+                          apiConfig.deepseek_api_key && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              Click "Refresh" to load available models from
+                              DeepSeek
+                            </p>
+                          )}
                       </div>
                     </div>
                   )}
@@ -703,9 +834,22 @@ const Settings = () => {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Model
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-medium text-gray-300">
+                            Model
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => fetchProviderModels("mistral")}
+                            disabled={
+                              modelLoading.mistral || !apiConfig.mistral_api_key
+                            }
+                            className="text-xs text-primary-400 hover:text-primary-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                            title="Refresh available models"
+                          >
+                            {modelLoading.mistral ? "Loading..." : "🔄 Refresh"}
+                          </button>
+                        </div>
                         <select
                           value={apiConfig.mistral_model}
                           onChange={(e) =>
@@ -715,32 +859,54 @@ const Settings = () => {
                             })
                           }
                           className="input-glass text-white w-full"
+                          disabled={modelLoading.mistral}
                         >
-                          <option
-                            value="mistral-small"
-                            className="bg-gray-800 text-white"
-                          >
-                            mistral-small
-                          </option>
-                          <option
-                            value="mistral-medium"
-                            className="bg-gray-800 text-white"
-                          >
-                            mistral-medium
-                          </option>
-                          <option
-                            value="mistral-large"
-                            className="bg-gray-800 text-white"
-                          >
-                            mistral-large
-                          </option>
-                          <option
-                            value="mistral-tiny"
-                            className="bg-gray-800 text-white"
-                          >
-                            mistral-tiny
-                          </option>
+                          {availableModels.mistral.length > 0 ? (
+                            availableModels.mistral.map((model) => (
+                              <option
+                                key={model}
+                                value={model}
+                                className="bg-gray-800 text-white"
+                              >
+                                {model}
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option
+                                value="mistral-small"
+                                className="bg-gray-800 text-white"
+                              >
+                                mistral-small (default)
+                              </option>
+                              <option
+                                value="mistral-medium"
+                                className="bg-gray-800 text-white"
+                              >
+                                mistral-medium
+                              </option>
+                              <option
+                                value="mistral-large"
+                                className="bg-gray-800 text-white"
+                              >
+                                mistral-large
+                              </option>
+                              <option
+                                value="mistral-tiny"
+                                className="bg-gray-800 text-white"
+                              >
+                                mistral-tiny
+                              </option>
+                            </>
+                          )}
                         </select>
+                        {availableModels.mistral.length === 0 &&
+                          apiConfig.mistral_api_key && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              Click "Refresh" to load available models from
+                              Mistral
+                            </p>
+                          )}
                       </div>
                     </div>
                   )}
@@ -815,9 +981,22 @@ const Settings = () => {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
-                          Model
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-sm font-medium text-gray-300">
+                            Model
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => fetchProviderModels("gemini")}
+                            disabled={
+                              modelLoading.gemini || !apiConfig.gemini_api_key
+                            }
+                            className="text-xs text-primary-400 hover:text-primary-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                            title="Refresh available models"
+                          >
+                            {modelLoading.gemini ? "Loading..." : "🔄 Refresh"}
+                          </button>
+                        </div>
                         <select
                           value={apiConfig.gemini_model}
                           onChange={(e) =>
@@ -827,32 +1006,54 @@ const Settings = () => {
                             })
                           }
                           className="input-glass text-white w-full"
+                          disabled={modelLoading.gemini}
                         >
-                          <option
-                            value="gemini-pro"
-                            className="bg-gray-800 text-white"
-                          >
-                            gemini-pro
-                          </option>
-                          <option
-                            value="gemini-pro-vision"
-                            className="bg-gray-800 text-white"
-                          >
-                            gemini-pro-vision
-                          </option>
-                          <option
-                            value="gemini-1.5-pro"
-                            className="bg-gray-800 text-white"
-                          >
-                            gemini-1.5-pro
-                          </option>
-                          <option
-                            value="gemini-1.5-flash"
-                            className="bg-gray-800 text-white"
-                          >
-                            gemini-1.5-flash
-                          </option>
+                          {availableModels.gemini.length > 0 ? (
+                            availableModels.gemini.map((model) => (
+                              <option
+                                key={model}
+                                value={model}
+                                className="bg-gray-800 text-white"
+                              >
+                                {model}
+                              </option>
+                            ))
+                          ) : (
+                            <>
+                              <option
+                                value="gemini-pro"
+                                className="bg-gray-800 text-white"
+                              >
+                                gemini-pro (default)
+                              </option>
+                              <option
+                                value="gemini-pro-vision"
+                                className="bg-gray-800 text-white"
+                              >
+                                gemini-pro-vision
+                              </option>
+                              <option
+                                value="gemini-1.5-pro"
+                                className="bg-gray-800 text-white"
+                              >
+                                gemini-1.5-pro
+                              </option>
+                              <option
+                                value="gemini-1.5-flash"
+                                className="bg-gray-800 text-white"
+                              >
+                                gemini-1.5-flash
+                              </option>
+                            </>
+                          )}
                         </select>
+                        {availableModels.gemini.length === 0 &&
+                          apiConfig.gemini_api_key && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              Click "Refresh" to load available models from
+                              Gemini
+                            </p>
+                          )}
                       </div>
                     </div>
                   )}
