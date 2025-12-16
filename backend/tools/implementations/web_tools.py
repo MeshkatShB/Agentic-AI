@@ -30,7 +30,7 @@ Use this tool when you need to:
 - Look up information about people, places, events, or topics
 - Get real-time data from the internet
 - Verify information or find sources
-This tool uses SearXNG (if available) or DuckDuckGo to search the web and return relevant results."""
+This tool uses SearXNG (if available) or DuckDuckGo to search the web and automatically fetches the full page content for the top 5 results, providing both search snippets and complete page text."""
     
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -103,6 +103,31 @@ This tool uses SearXNG (if available) or DuckDuckGo to search the web and return
             logger.debug(f"Final search results count: {len(results)}")
             logger.debug(f"Search results: {results}")
             
+            # Fetch full page content for top 5 results
+            top_results = results[:5]
+            logger.debug(f"Fetching full content for top {len(top_results)} results...")
+            
+            # Fetch content for all top results concurrently
+            content_tasks = []
+            valid_results = []
+            for result in top_results:
+                if result.get("url"):
+                    content_tasks.append(self._fetch_page_content(result.get("url")))
+                    valid_results.append(result)
+            
+            if content_tasks:
+                content_results = await asyncio.gather(*content_tasks, return_exceptions=True)
+                
+                # Add content to results
+                for result, content_result in zip(valid_results, content_results):
+                    if isinstance(content_result, Exception):
+                        logger.warning(f"Failed to fetch content for {result.get('url')}: {content_result}")
+                        result["content"] = None
+                        result["content_error"] = str(content_result)
+                    else:
+                        result["content"] = content_result.get("text", "") if content_result else None
+                        result["content_length"] = content_result.get("text_length", 0) if content_result else 0
+            
             # Determine actual source used
             actual_source = "duckduckgo"
             if results:
@@ -114,7 +139,8 @@ This tool uses SearXNG (if available) or DuckDuckGo to search the web and return
                 metadata={
                     "count": len(results),
                     "source": actual_source,
-                    "query": query
+                    "query": query,
+                    "pages_fetched": len([r for r in top_results if r.get("content")])
                 }
             )
             
@@ -346,6 +372,94 @@ This tool uses SearXNG (if available) or DuckDuckGo to search the web and return
             logger.error(f"HTML parsing error: {e}")
         
         return results
+    
+    async def _fetch_page_content(self, url: str, max_length: int = 10000) -> Dict[str, Any]:
+        """Fetch and extract text content from a webpage."""
+        if not url:
+            return None
+        
+        try:
+            # Validate URL format
+            if not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+            
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(
+                    url, 
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    allow_redirects=True
+                ) as response:
+                    if response.status != 200:
+                        logger.debug(f"Failed to fetch {url}: HTTP {response.status}")
+                        return None
+                    
+                    content = await response.text()
+                    
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(content, 'html.parser')
+                        
+                        # Remove script and style elements
+                        for script in soup(["script", "style", "nav", "footer", "header"]):
+                            script.decompose()
+                        
+                        # Try to find main content areas first
+                        main_selectors = [
+                            'main', 'article', '[role="main"]', 
+                            '.main-content', '.content', '.post-content',
+                            '#main', '#content', '#main-content', '.entry-content'
+                        ]
+                        
+                        main_content = None
+                        for selector in main_selectors:
+                            main_content = soup.select_one(selector)
+                            if main_content:
+                                break
+                        
+                        if main_content:
+                            text = main_content.get_text()
+                        else:
+                            # Fallback to body text
+                            body = soup.find('body')
+                            text = body.get_text() if body else soup.get_text()
+                        
+                        # Clean up the text
+                        lines = (line.strip() for line in text.splitlines())
+                        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                        text = ' '.join(chunk for chunk in chunks if chunk)
+                        
+                        # Truncate if too long
+                        if len(text) > max_length:
+                            text = text[:max_length] + "... [truncated]"
+                        
+                        return {
+                            "text": text,
+                            "text_length": len(text),
+                            "title": soup.title.string if soup.title else None
+                        }
+                    except ImportError:
+                        logger.warning("BeautifulSoup not available, skipping content extraction")
+                        return None
+                    except Exception as e:
+                        logger.debug(f"Error parsing content from {url}: {e}")
+                        return None
+                        
+        except asyncio.TimeoutError:
+            logger.debug(f"Timeout fetching {url}")
+            return None
+        except Exception as e:
+            logger.debug(f"Error fetching {url}: {e}")
+            return None
 
 
 class WebScrapeTool(BaseTool):
