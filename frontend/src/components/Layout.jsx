@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -14,11 +14,13 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  Globe,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { useThemeStore } from "../stores/themeStore";
 import clsx from "clsx";
 import Logo from "./Logo";
+import axios from "axios";
 
 const Layout = () => {
   const location = useLocation();
@@ -28,16 +30,58 @@ const Layout = () => {
   const [sidebarWidth, setSidebarWidth] = useState(256); // Default width
   const [isDragging, setIsDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentModel, setCurrentModel] = useState(null);
 
   const handleLogout = async () => {
     await logout();
     navigate("/login");
   };
 
+  useEffect(() => {
+    // Load current model configuration
+    const loadCurrentModel = async () => {
+      try {
+        const response = await axios.get("/settings/api-config");
+        const apiConfig = response.data;
+        const provider = apiConfig.llm_provider || "ollama";
+
+        let modelName = "Unknown";
+        if (provider === "ollama") {
+          // For Ollama, get from user settings
+          try {
+            const userSettingsRes = await axios.get("/settings/user");
+            modelName = userSettingsRes.data.model || "ollama";
+          } catch {
+            modelName = "ollama";
+          }
+        } else if (provider === "openai") {
+          modelName = apiConfig.openai_model || "gpt-4o-mini";
+        } else if (provider === "deepseek") {
+          modelName = apiConfig.deepseek_model || "deepseek-chat";
+        } else if (provider === "mistral") {
+          modelName = apiConfig.mistral_model || "mistral-small";
+        } else if (provider === "gemini") {
+          modelName = apiConfig.gemini_model || "gemini-pro";
+        }
+
+        setCurrentModel({
+          provider: provider.charAt(0).toUpperCase() + provider.slice(1),
+          model: modelName,
+        });
+      } catch (error) {
+        console.error("Failed to load current model:", error);
+        setCurrentModel({ provider: "Ollama", model: "Unknown" });
+      }
+    };
+
+    loadCurrentModel();
+  }, []);
+
   const navItems = [
     { path: "/chat", icon: MessageSquare, label: "Chat" },
     { path: "/documents", icon: FileText, label: "Documents" },
     { path: "/tools", icon: Wrench, label: "Tools" },
+    { path: "/browser-use", icon: Globe, label: "Browser Automation" },
   ];
 
   const handleDragStart = (e) => {
@@ -193,6 +237,21 @@ const Layout = () => {
         {/* Header */}
         <header className="h-16 glass-dark border-b border-gray-700/50 flex items-center justify-end px-6 flex-shrink-0">
           <div className="flex items-center space-x-4">
+            {/* Current Model Display */}
+            {currentModel && (
+              <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-500/30">
+                <span className="text-xs font-medium text-blue-400">{currentModel.provider}</span>
+                <span className="text-xs text-gray-400">/</span>
+                <span className="text-xs text-blue-300">{currentModel.model}</span>
+              </div>
+            )}
+
+            {/* Status indicator */}
+            <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-xs text-green-400">Online</span>
+            </div>
+
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}
@@ -204,12 +263,6 @@ const Layout = () => {
                 <Moon className="w-5 h-5 text-gray-600" />
               )}
             </button>
-
-            {/* Status indicator */}
-            <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-green-500/20 border border-green-500/30">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-xs text-green-400">Online</span>
-            </div>
           </div>
         </header>
 
