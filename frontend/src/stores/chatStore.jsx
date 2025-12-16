@@ -317,6 +317,7 @@ export const useChatStore = create((set, get) => ({
                     messages,
                     isStreaming: false,
                     streamingMessage: "",
+                    abortController: null,
                   };
                 });
               } else if (data.type === "error") {
@@ -352,6 +353,13 @@ export const useChatStore = create((set, get) => ({
           }
         }
       }
+
+      // Stream ended - ensure streaming state is reset
+      set((state) => ({
+        isStreaming: false,
+        streamingMessage: "",
+        abortController: null,
+      }));
     } catch (error) {
       // Don't show error if it was aborted (user stopped)
       if (error.name !== "AbortError") {
