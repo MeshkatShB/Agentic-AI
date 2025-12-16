@@ -51,7 +51,7 @@ from backend.models import Base, engine, get_db, User, Conversation, Message
 from backend.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
-from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router
+from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router, browser_use_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -86,6 +86,7 @@ app.include_router(tools_router, prefix="/api/tools", tags=["Tools"])
 app.include_router(custom_tools_router, prefix="/api/custom-tools", tags=["Custom Tools"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
+app.include_router(browser_use_router, prefix="/api/browser-use", tags=["Browser Use"])
 
 
 @app.get("/health")
