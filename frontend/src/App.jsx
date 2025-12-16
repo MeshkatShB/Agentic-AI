@@ -11,6 +11,7 @@ import Chat from "./pages/Chat";
 import Settings from "./pages/Settings";
 import Tools from "./pages/Tools";
 import Documents from "./pages/Documents";
+import BrowserUse from "./pages/BrowserUse";
 import AddTool from "./pages/AddTool";
 import EditTool from "./pages/EditTool";
 
@@ -95,6 +96,7 @@ function App() {
             <Route path="/chat/:conversationId" element={<Chat />} />
             <Route path="/tools" element={<Tools />} />
             <Route path="/documents" element={<Documents />} />
+            <Route path="/browser-use" element={<BrowserUse />} />
             <Route path="/add-tool" element={<AddTool />} />
             <Route path="/edit-tool/:toolId" element={<EditTool />} />
             <Route path="/settings" element={<Settings />} />
