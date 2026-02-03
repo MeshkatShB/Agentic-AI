@@ -99,9 +99,12 @@ class AgentExecutor:
         stream: bool = True,
         selected_tools: Optional[list] = None,
         use_deepagent: bool = False,
-        file_attachments: Optional[list] = None
+        file_attachments: Optional[list] = None,
+        tool_overrides: Optional[list] = None,
+        mcp_server_ids_override: Optional[list] = None,
+        use_tool_selector_middleware: Optional[bool] = None,
     ) -> AsyncGenerator[Dict, None]:
-        """Execute agent for user message."""
+        """Execute agent for user message. tool_overrides/mcp_server_ids_override/use_tool_selector_middleware for Telegram."""
         
         # Create cancellation token for this execution
         cancellation_token = asyncio.Event()
@@ -157,13 +160,13 @@ class AgentExecutor:
                 except Exception as reg_err:
                     logger.warning(f"Failed to register custom tools for user {user.id}: {reg_err}")
 
-                # Determine which tools to use
-                # Treat an empty list from the UI as an explicit "no tools" choice.
-                if selected_tools is not None:
+                if tool_overrides is not None:
+                    tools_to_use = list(tool_overrides)
+                    logger.info(f"Using overridden tools (e.g. Telegram): {tools_to_use}")
+                elif selected_tools is not None:
                     tools_to_use = list(selected_tools)
                     logger.info(f"Using UI-selected tools (may be empty): {tools_to_use}")
                 else:
-                    # If UI didn't provide a selection, fall back to user's allowed tools
                     tools_to_use = user.allowed_tools or []
                     logger.info(f"UI provided no selection; using allowed_tools: {tools_to_use}")
                 
@@ -179,14 +182,17 @@ class AgentExecutor:
                 # Track if we've sent the title update
                 title_sent = False
                 
-                # Run agent with message history
+                mcp_ids = mcp_server_ids_override if mcp_server_ids_override is not None else None
+                use_middleware = use_tool_selector_middleware if use_tool_selector_middleware is not None else True
                 async for event in agent.run(
                     query=message,
                     conversation_id=conversation_id,
                     user_id=user.id,
                     allowed_tools=tools_to_use,
                     stream=stream,
-                    message_history=history_messages
+                    message_history=history_messages,
+                    mcp_server_ids=mcp_ids,
+                    use_tool_selector_middleware=use_middleware,
                 ):
                     # Check for cancellation before processing each event
                     if cancellation_token.is_set():
