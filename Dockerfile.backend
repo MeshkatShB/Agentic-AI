@@ -1,0 +1,47 @@
+# Backend Dockerfile
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Upgrade pip first (fixes many PyPI JSON issues)
+RUN pip install --upgrade pip setuptools wheel
+
+# Install Python dependencies with retry on failure
+# The JSON decode error is often a transient PyPI issue
+RUN pip install --no-cache-dir --timeout 100 -r requirements.txt || \
+    (echo "First attempt failed, clearing cache and retrying..." && \
+     pip cache purge && \
+     pip install --no-cache-dir --timeout 100 -r requirements.txt)
+
+# Copy backend code
+COPY backend/ ./backend/
+
+# Create necessary directories
+RUN mkdir -p logs chroma_db user_documents data db
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Expose port
+EXPOSE 3333
+
+# Create entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# Run the application
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "3333"]
+
