@@ -244,10 +244,14 @@ IMPORTANT RULES:
         user_id: int,
         allowed_tools: List[str],
         stream: bool = True,
-        message_history: Optional[List] = None
+        message_history: Optional[List] = None,
+        mcp_server_ids: Optional[List[int]] = None,
+        use_tool_selector_middleware: bool = True,
     ) -> AsyncGenerator[Dict, None]:
-        """Run the agent with a query and optional message history."""
-        
+        """Run the agent with a query and optional message history.
+        mcp_server_ids: when None, load all user MCP servers; when [], load none; when [id,...], load only those.
+        use_tool_selector_middleware: when False, skip LLMToolSelectorMiddleware (avoids model dict-response issues).
+        """
         start_time = datetime.utcnow()
         self.steps = []
         self.current_step = 0
@@ -258,15 +262,13 @@ IMPORTANT RULES:
             langchain_tools = LangChainToolAdapter.convert_tools_for_user(allowed_tools, user_id=user_id)
             logger.info(f"Converted {len(langchain_tools)} tools for agent: {[t.name for t in langchain_tools]}")
             
-            # Load MCP tools if available
+            # Load MCP tools if available (mcp_server_ids=None means all; [] means none)
             try:
                 from backend.services.mcp_service import mcp_service
                 from backend.models import SessionLocal
-                
-                # Create a database session for loading MCP tools
                 db_session = SessionLocal()
                 try:
-                    mcp_tools = await mcp_service.get_tools_for_user(db_session, user_id)
+                    mcp_tools = await mcp_service.get_tools_for_user(db_session, user_id, server_ids=mcp_server_ids)
                     if mcp_tools:
                         langchain_tools.extend(mcp_tools)
                         logger.info(f"Added {len(mcp_tools)} MCP tools. Total tools: {len(langchain_tools)}")
@@ -274,14 +276,9 @@ IMPORTANT RULES:
                     db_session.close()
             except Exception as mcp_error:
                 logger.warning(f"Failed to load MCP tools: {mcp_error}")
-                # Continue without MCP tools if loading fails
             
-            # Create middleware list for intelligent tool selection
             middleware_list = []
-            
-            # Add LLM tool selector middleware to help agent automatically select relevant tools
-            # This is especially useful for web_search when internet information is needed
-            if LLM_TOOL_SELECTOR_AVAILABLE and langchain_tools and len(langchain_tools) > 1:
+            if use_tool_selector_middleware and LLM_TOOL_SELECTOR_AVAILABLE and langchain_tools and len(langchain_tools) > 1:
                 try:
                     # Use a lightweight model for tool selection (same as main model for consistency)
                     llm_provider = self.api_config.get("llm_provider", "ollama")
@@ -370,6 +367,18 @@ IMPORTANT RULES:
                 }
                 yield serialize_datetime(response_dict)
         
+        except AssertionError as e:
+            err_msg = str(e)
+            if "Expected dict response" in err_msg and "NoneType" in err_msg:
+                friendly = (
+                    "The AI model returned an unexpected response. "
+                    "This can happen with some models. Try again, or switch to another model in Settings → AI Settings."
+                )
+                logger.warning(f"Agent model response error (model compatibility): {e}")
+                yield {"type": "error", "error": friendly}
+            else:
+                logger.error(f"Agent assertion error: {e}", exc_info=True)
+                yield {"type": "error", "error": err_msg}
         except Exception as e:
             logger.error(f"Agent execution error: {e}", exc_info=True)
             yield {
