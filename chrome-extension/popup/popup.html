@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI Agent</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h2>AI Agent Assistant</h2>
+        <div class="status" id="status">Ready</div>
+      </div>
+
+      <div class="page-info" id="pageInfo">
+        <div class="page-title" id="pageTitle">Loading...</div>
+        <div class="page-url" id="pageUrl"></div>
+      </div>
+
+      <div class="chat-container">
+        <div class="messages" id="messages"></div>
+        <div class="input-container">
+          <textarea
+            id="questionInput"
+            placeholder="Ask a question about this page..."
+            rows="3"
+          ></textarea>
+          <button id="askButton">Ask</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="refreshButton">Refresh Content</button>
+        <button id="clearButton">Clear History</button>
+        <button id="settingsButton">Settings</button>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
