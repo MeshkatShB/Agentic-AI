@@ -75,6 +75,12 @@ try:
 except Exception as e:
     logger.warning(f"last_tool_count column migration check failed (this is OK if column already exists): {e}")
 
+try:
+    from backend.migrations.create_telegram_pairing_table import migrate as migrate_telegram_pairing
+    migrate_telegram_pairing()
+except Exception as e:
+    logger.warning(f"Telegram pairings table migration check failed (this is OK if table already exists): {e}")
+
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -216,6 +222,14 @@ async def startup_event():
     vector_store = get_vector_store()
     await vector_store.initialize()
     
+    # Start Telegram bot if configured
+    if getattr(settings, "ENABLE_TELEGRAM_BOT", False) and (getattr(settings, "TELEGRAM_BOT_TOKEN", None) or "").strip():
+        try:
+            from backend.services.telegram_bot import start_telegram_bot
+            await start_telegram_bot()
+        except Exception as e:
+            logger.warning(f"Telegram bot failed to start: {e}")
+    
     # Log startup
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} started")
     logger.info(f"Using model: {settings.DEFAULT_MODEL}")
@@ -227,6 +241,13 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
+    # Stop Telegram bot
+    try:
+        from backend.services.telegram_bot import stop_telegram_bot
+        await stop_telegram_bot()
+    except Exception as e:
+        logger.warning(f"Telegram bot shutdown: {e}")
+    
     # Clear all agents
     agent_executor.clear_all_agents()
     
@@ -241,16 +262,6 @@ async def root():
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "status": "running"
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "model": settings.DEFAULT_MODEL,
-        "vector_store": settings.VECTOR_STORE
     }
 
 
