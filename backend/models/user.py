@@ -49,6 +49,7 @@ class User(Base):
     # Relationships
     custom_tools = relationship("CustomTool", back_populates="creator")
     mcp_servers = relationship("MCPServer", back_populates="creator")
+    telegram_pairing = relationship("TelegramPairing", back_populates="user", uselist=False)
     
     def to_dict(self):
         """Convert user to dictionary."""

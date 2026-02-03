@@ -6,6 +6,7 @@ from .conversation import Conversation, Message, AgentStep
 from .custom_tool import CustomTool
 from .user_document import UserDocument
 from .mcp_server import MCPServer
+from .telegram_pairing import TelegramPairing
 
 __all__ = [
     "Base",
@@ -18,5 +19,6 @@ __all__ = [
     "AgentStep",
     "CustomTool",
     "UserDocument",
-    "MCPServer"
+    "MCPServer",
+    "TelegramPairing"
 ]

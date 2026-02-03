@@ -26,38 +26,49 @@ class MCPService:
             logger.warning("MCP adapters not available. Install langchain-mcp-adapters to enable MCP features.")
         self._clients: Dict[int, MultiServerMCPClient] = {}  # user_id -> client
     
-    def get_mcp_config_for_user(self, db: Session, user_id: int) -> Dict[str, Dict]:
-        """Get MCP server configurations for a user."""
-        servers = db.query(MCPServer).filter(
+    def get_mcp_config_for_user(
+        self, db: Session, user_id: int, server_ids: Optional[List[int]] = None
+    ) -> Dict[str, Dict]:
+        """Get MCP server configurations for a user. Optionally filter by server IDs."""
+        q = db.query(MCPServer).filter(
             MCPServer.created_by == user_id,
             MCPServer.is_active == True,
             MCPServer.is_enabled == True
-        ).all()
-        
+        )
+        if server_ids is not None:
+            if len(server_ids) == 0:
+                return {}
+            q = q.filter(MCPServer.id.in_(server_ids))
+        servers = q.all()
         config = {}
         for server in servers:
             config[server.name] = server.to_mcp_config()
-        
         return config
-    
-    async def get_client_for_user(self, db: Session, user_id: int) -> Optional[MultiServerMCPClient]:
-        """Get or create MCP client for a user."""
+
+    async def get_client_for_user(
+        self, db: Session, user_id: int, server_ids: Optional[List[int]] = None
+    ) -> Optional[MultiServerMCPClient]:
+        """Get or create MCP client for a user. When server_ids is set, do not use cache."""
         if not MCP_AVAILABLE:
             return None
-        
-        # Return cached client if available
+        if server_ids is not None and len(server_ids) == 0:
+            return None
+        if server_ids is not None:
+            config = self.get_mcp_config_for_user(db, user_id, server_ids)
+            if not config:
+                return None
+            try:
+                return MultiServerMCPClient(config)
+            except Exception as e:
+                logger.error(f"Failed to create MCP client for user {user_id}: {e}", exc_info=True)
+                return None
         if user_id in self._clients:
             return self._clients[user_id]
-        
-        # Get server configurations
         config = self.get_mcp_config_for_user(db, user_id)
-        
         if not config:
             logger.info(f"No MCP servers configured for user {user_id}")
             return None
-        
         try:
-            # Create client
             client = MultiServerMCPClient(config)
             self._clients[user_id] = client
             logger.info(f"Created MCP client for user {user_id} with {len(config)} servers")
@@ -65,16 +76,16 @@ class MCPService:
         except Exception as e:
             logger.error(f"Failed to create MCP client for user {user_id}: {e}", exc_info=True)
             return None
-    
-    async def get_tools_for_user(self, db: Session, user_id: int) -> List[Any]:
-        """Get MCP tools for a user."""
+
+    async def get_tools_for_user(
+        self, db: Session, user_id: int, server_ids: Optional[List[int]] = None
+    ) -> List[Any]:
+        """Get MCP tools for a user. Optionally limit to given server IDs (empty list = no MCP)."""
         if not MCP_AVAILABLE:
             return []
-        
-        client = await self.get_client_for_user(db, user_id)
+        client = await self.get_client_for_user(db, user_id, server_ids=server_ids)
         if not client:
             return []
-        
         try:
             tools = await client.get_tools()
             logger.info(f"Loaded {len(tools)} MCP tools for user {user_id}")
