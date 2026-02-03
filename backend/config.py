@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     SEARXNG_URL: Optional[str] = "http://localhost:8888/"
     WEB_SEARCH_TIMEOUT: int = 10
     
+    # Telegram Bot (optional)
+    ENABLE_TELEGRAM_BOT: bool = False
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+
     # CORS
     # Chrome extensions use chrome-extension:// protocol, which needs special handling
     # Use "*" to allow all origins (less secure) or specify exact origins
