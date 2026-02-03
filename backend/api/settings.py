@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 from typing import Dict, List, Optional
 from pydantic import BaseModel
 
-from backend.models import get_db, User
+from backend.models import get_db, User, TelegramPairing, MCPServer
 from backend.auth import get_current_user
+import secrets
+import string
 from backend.config import settings as app_settings
 from backend.llm import OllamaClient
 
@@ -523,3 +525,134 @@ async def get_provider_models(
             "error": f"Failed to fetch models: {str(e)}",
             "models": []
         }
+
+
+# --- Telegram bot settings (pairing by username) ---
+TELEGRAM_CODE_CHARS = string.ascii_uppercase + string.digits
+TELEGRAM_CODE_LENGTH = 8
+
+
+def _telegram_generate_pairing_code() -> str:
+    return "".join(secrets.choice(TELEGRAM_CODE_CHARS) for _ in range(TELEGRAM_CODE_LENGTH))
+
+
+class TelegramSettingsResponse(BaseModel):
+    """Telegram bot and pairing status plus chat environment (tools, MCP)."""
+    enabled: bool
+    has_token: bool
+    bot_username: Optional[str] = None
+    pairing_code: Optional[str] = None
+    is_paired: bool
+    telegram_username: Optional[str] = None
+    telegram_tools: Optional[List[str]] = None
+    telegram_use_mcp: bool = True
+    telegram_mcp_server_ids: Optional[List[int]] = None
+    telegram_simple_agent: bool = False
+    available_tools: List[str] = []
+    mcp_servers: List[Dict] = []
+
+
+class TelegramConfigUpdate(BaseModel):
+    """Update Telegram chat environment (tools and MCP)."""
+    telegram_tools: Optional[List[str]] = None
+    telegram_use_mcp: Optional[bool] = None
+    telegram_mcp_server_ids: Optional[List[int]] = None
+    telegram_simple_agent: Optional[bool] = None
+
+
+@router.get("/telegram", response_model=TelegramSettingsResponse)
+async def get_telegram_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get Telegram bot status, pairing, and chat environment (tools/MCP) with available options."""
+    enabled = getattr(app_settings, "ENABLE_TELEGRAM_BOT", False)
+    token = (getattr(app_settings, "TELEGRAM_BOT_TOKEN", None) or "").strip()
+    has_token = bool(token)
+
+    pairing = db.query(TelegramPairing).filter(TelegramPairing.user_id == current_user.id).first()
+    if not pairing:
+        pairing = TelegramPairing(user_id=current_user.id, pairing_code=_telegram_generate_pairing_code())
+        db.add(pairing)
+        db.commit()
+        db.refresh(pairing)
+    is_paired = pairing.telegram_user_id is not None
+    pairing_code = pairing.pairing_code if not is_paired else None
+    telegram_username = pairing.telegram_username or None
+
+    prefs = current_user.preferences or {}
+    telegram_tools = prefs.get("telegram_tools")
+    telegram_use_mcp = prefs.get("telegram_use_mcp", True)
+    telegram_mcp_server_ids = prefs.get("telegram_mcp_server_ids")
+    telegram_simple_agent = prefs.get("telegram_simple_agent", False)
+
+    available_tools = list(current_user.allowed_tools or [])
+    mcp_servers = [
+        {"id": s.id, "name": s.name, "is_enabled": s.is_enabled}
+        for s in db.query(MCPServer).filter(
+            MCPServer.created_by == current_user.id,
+            MCPServer.is_active == True
+        ).all()
+    ]
+
+    return TelegramSettingsResponse(
+        enabled=enabled and has_token,
+        has_token=has_token,
+        bot_username=None,
+        pairing_code=pairing_code,
+        is_paired=is_paired,
+        telegram_username=telegram_username or None,
+        telegram_tools=telegram_tools,
+        telegram_use_mcp=telegram_use_mcp,
+        telegram_mcp_server_ids=telegram_mcp_server_ids,
+        telegram_simple_agent=telegram_simple_agent,
+        available_tools=available_tools,
+        mcp_servers=mcp_servers,
+    )
+
+
+@router.put("/telegram/config", response_model=TelegramSettingsResponse)
+async def update_telegram_config(
+    body: TelegramConfigUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update Telegram chat environment: which tools and MCP servers to use, and simple agent mode."""
+    from sqlalchemy.orm.attributes import flag_modified
+    prefs = current_user.preferences or {}
+    if body.telegram_tools is not None:
+        prefs["telegram_tools"] = body.telegram_tools
+    if body.telegram_use_mcp is not None:
+        prefs["telegram_use_mcp"] = body.telegram_use_mcp
+    if body.telegram_mcp_server_ids is not None:
+        prefs["telegram_mcp_server_ids"] = body.telegram_mcp_server_ids
+    if body.telegram_simple_agent is not None:
+        prefs["telegram_simple_agent"] = body.telegram_simple_agent
+    current_user.preferences = prefs
+    flag_modified(current_user, "preferences")
+    db.commit()
+    db.refresh(current_user)
+    return await get_telegram_settings(current_user=current_user, db=db)
+
+
+@router.post("/telegram/pairing-code")
+async def regenerate_telegram_pairing_code(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate or regenerate pairing code for the current user. Unpairs existing Telegram if any."""
+    pairing = db.query(TelegramPairing).filter(TelegramPairing.user_id == current_user.id).first()
+    new_code = _telegram_generate_pairing_code()
+    if pairing:
+        pairing.pairing_code = new_code
+        pairing.telegram_user_id = None
+        pairing.telegram_username = None
+        pairing.paired_at = None
+        db.commit()
+        db.refresh(pairing)
+    else:
+        pairing = TelegramPairing(user_id=current_user.id, pairing_code=new_code)
+        db.add(pairing)
+        db.commit()
+        db.refresh(pairing)
+    return {"pairing_code": new_code}
