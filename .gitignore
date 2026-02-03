@@ -25,6 +25,15 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lzma
+*.tar.lz
+*.tar.z
+*.tar.z.gz
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -52,6 +61,7 @@ coverage.xml
 cover/
 test.py
 sample.txt
+test_mcp_server_simple.py
 
 # Translations
 *.mo
@@ -230,3 +240,4 @@ graphs/
 
 # Documents
 user_documents/
+README_MCP_TEST.md
