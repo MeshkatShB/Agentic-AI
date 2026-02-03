@@ -54,6 +54,9 @@ deepagents==0.2.8
 # Browser Automation
 browser-use==0.11.1
 
+# Telegram Bot
+python-telegram-bot==22.6
+
 # Utilities
 numpy==1.26.4
 pandas==2.1.4
