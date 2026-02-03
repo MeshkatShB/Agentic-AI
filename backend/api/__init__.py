@@ -7,6 +7,7 @@ from .custom_tools import router as custom_tools_router
 from .settings import router as settings_router
 from .documents import router as documents_router
 from .browser_automation import router as browser_use_router
+from .mcp import router as mcp_router
 
 __all__ = [
     "auth_router",
@@ -15,5 +16,6 @@ __all__ = [
     "custom_tools_router",
     "settings_router",
     "documents_router",
-    "browser_use_router"
+    "browser_use_router",
+    "mcp_router"
 ]

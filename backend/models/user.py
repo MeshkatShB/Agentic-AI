@@ -48,6 +48,7 @@ class User(Base):
     
     # Relationships
     custom_tools = relationship("CustomTool", back_populates="creator")
+    mcp_servers = relationship("MCPServer", back_populates="creator")
     
     def to_dict(self):
         """Convert user to dictionary."""

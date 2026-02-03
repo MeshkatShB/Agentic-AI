@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "agent_memory"
     EMBEDDING_MODEL: str = "Qwen/Qwen3-Embedding-0.6B"  # Qwen3-0.6B model for better Persian support
     EMBEDDING_DIMENSION: int = 1024  # Dimension for the multilingual model
-    EMBEDDING_DEVICE: str = "cuda"  # "auto", "cpu", "cuda", "mps" (auto detects GPU)
+    EMBEDDING_DEVICE: str = "auto"  # "auto", "cpu", "cuda", "mps" (auto detects GPU, defaults to CPU if unavailable)
     CHUNK_SIZE: int = 1000  # Characters per chunk
     CHUNK_OVERLAP: int = 200  # Overlap between chunks
     MAX_RETRIEVAL_RESULTS: int = 10  # Maximum results to retrieve
@@ -70,7 +70,10 @@ class Settings(BaseSettings):
     WEB_SEARCH_TIMEOUT: int = 10
     
     # CORS
-    CORS_ORIGINS: Union[str, List[str]] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
+    # Chrome extensions use chrome-extension:// protocol, which needs special handling
+    # Use "*" to allow all origins (less secure) or specify exact origins
+    # CORS_ORIGINS: Union[str, List[str]] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://localhost:8080"]
+    CORS_ORIGINS: Union[str, List[str]] = ["*"]
     
     # External API Keys (Optional - can be set via environment variables)
     # These are used as fallbacks if not configured per-user in the database

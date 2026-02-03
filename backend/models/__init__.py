@@ -5,6 +5,7 @@ from .user import User
 from .conversation import Conversation, Message, AgentStep
 from .custom_tool import CustomTool
 from .user_document import UserDocument
+from .mcp_server import MCPServer
 
 __all__ = [
     "Base",
@@ -16,5 +17,6 @@ __all__ = [
     "Message",
     "AgentStep",
     "CustomTool",
-    "UserDocument"
+    "UserDocument",
+    "MCPServer"
 ]

@@ -42,6 +42,7 @@ class MessageRequest(BaseModel):
     use_deepagent: bool = False
     file_contents: Optional[List[dict]] = []  # List of {filename, content, metadata}
     file_attachments: Optional[List[dict]] = []  # List of {filename, size, type} for tracking
+    page_context: Optional[dict] = None  # Page content from Chrome extension
 
 
 class MessageResponse(BaseModel):
@@ -256,10 +257,34 @@ async def send_message(
             detail="Conversation not found or access denied"
         )
     
-    # Build message content with file contents appended
+    # Build message content with page context and file contents appended
     message_content = request.content
     file_attachments_data = []
     file_sections = []  # Initialize to avoid UnboundLocalError
+    
+    # Add page context if provided (from Chrome extension)
+    if request.page_context:
+        page_url = request.page_context.get('url', 'Unknown')
+        page_title = request.page_context.get('title', 'Unknown')
+        page_text = request.page_context.get('text', '')
+        
+        # Limit page text to avoid token limits
+        max_page_text = 8000  # Increased for better context
+        if len(page_text) > max_page_text:
+            page_text = page_text[:max_page_text] + "... [truncated]"
+        
+        # Format message to make it clear this is context to use for answering
+        context_section = f"""The user is asking about a webpage they are currently viewing. Below is the content from that webpage. Please answer their question based on this content.
+
+Webpage Information:
+- URL: {page_url}
+- Title: {page_title}
+
+Webpage Content:
+{page_text}
+
+Now, please answer the user's question about this webpage:"""
+        message_content = context_section + "\n\n" + message_content
     
     if request.file_contents:
         for file_data in request.file_contents:

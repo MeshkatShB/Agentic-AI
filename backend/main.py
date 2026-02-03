@@ -51,7 +51,7 @@ from backend.models import Base, engine, get_db, User, Conversation, Message
 from backend.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
-from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router, browser_use_router
+from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router, browser_use_router, mcp_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -63,6 +63,18 @@ try:
 except Exception as e:
     logger.warning(f"Migration check failed (this is OK if column already exists): {e}")
 
+try:
+    from backend.migrations.create_mcp_servers_table import migrate as migrate_mcp_servers
+    migrate_mcp_servers()
+except Exception as e:
+    logger.warning(f"MCP servers table migration check failed (this is OK if table already exists): {e}")
+
+try:
+    from backend.migrations.add_last_tool_count_column import migrate as migrate_tool_count
+    migrate_tool_count()
+except Exception as e:
+    logger.warning(f"last_tool_count column migration check failed (this is OK if column already exists): {e}")
+
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -71,9 +83,29 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Handle Chrome extension origins (chrome-extension://) and regular origins
+def get_cors_origins():
+    """Get CORS origins, handling Chrome extension protocol."""
+    origins = []
+    for origin in settings.CORS_ORIGINS:
+        if origin == "*":
+            return ["*"]  # Allow all origins
+        origins.append(origin)
+    
+    # Chrome extensions use chrome-extension:// protocol
+    # We need to allow all chrome-extension origins or use a wildcard
+    # For security, we'll check if any origin contains chrome-extension
+    # If CORS_ORIGINS includes "*", allow all
+    return origins
+
+# Use allow_origin_regex for Chrome extensions if needed
+cors_origins = get_cors_origins()
+allow_all = "*" in cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=cors_origins if not allow_all else ["*"],
+    allow_origin_regex=r"^chrome-extension://.*" if not allow_all else None,  # Allow all Chrome extensions
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,6 +119,7 @@ app.include_router(custom_tools_router, prefix="/api/custom-tools", tags=["Custo
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
 app.include_router(browser_use_router, prefix="/api/browser-use", tags=["Browser Use"])
+app.include_router(mcp_router, prefix="/api/mcp", tags=["MCP Servers"])
 
 
 @app.get("/health")

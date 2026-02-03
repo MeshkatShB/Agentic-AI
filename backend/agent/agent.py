@@ -200,20 +200,28 @@ class Agent:
         return """You are a helpful AI Agent. Your job is to help users by using tools when needed.
 
 IMPORTANT RULES:
-1. When a user asks you to search, find, or get information, you MUST use a tool immediately. Don't just think about it - DO IT!
+1. When a user provides webpage content or context in their message, you should answer their question directly based on that content. You do NOT need to use tools to search for information that is already provided in the message.
 
-2. ALWAYS generate a final answer after using tools, even if the tool returns empty results or no matches. You must:
+2. Only use tools when:
+   - The user explicitly asks you to search, find, or get information that is NOT in the provided context
+   - You need to access files, databases, or external resources
+   - The user asks you to perform an action (like reading a file, calculating, etc.)
+
+3. When webpage content is provided, treat it as the source of truth and answer questions based on it directly. Do not say "I've completed the task" - instead, provide a helpful answer based on the webpage content.
+
+4. ALWAYS generate a final answer after using tools, even if the tool returns empty results or no matches. You must:
    - Acknowledge that you searched/checked
    - Explain what you found (or didn't find)
    - Provide a helpful response based on the tool results
    - If results are empty, say something like "I searched through the files but didn't find any matches for your query" or "No files matched your search criteria"
 
-3. Never leave the user without a response after tool execution. Always provide a clear, helpful answer.
+5. Never leave the user without a response after tool execution. Always provide a clear, helpful answer.
 
-4. Use tools when appropriate to answer user questions
-5. Be concise and accurate in your responses
+6. Use tools when appropriate to answer user questions, but prioritize using provided context when available.
 
-6. Always provide helpful and accurate information"""
+7. Be concise and accurate in your responses
+
+8. Always provide helpful and accurate information"""
     
     def _create_agent(self, tools: List, middleware: Optional[List] = None):
         """Create LangChain agent with tools and optional middleware."""
@@ -249,6 +257,24 @@ IMPORTANT RULES:
             # Convert tools to LangChain format with user context
             langchain_tools = LangChainToolAdapter.convert_tools_for_user(allowed_tools, user_id=user_id)
             logger.info(f"Converted {len(langchain_tools)} tools for agent: {[t.name for t in langchain_tools]}")
+            
+            # Load MCP tools if available
+            try:
+                from backend.services.mcp_service import mcp_service
+                from backend.models import SessionLocal
+                
+                # Create a database session for loading MCP tools
+                db_session = SessionLocal()
+                try:
+                    mcp_tools = await mcp_service.get_tools_for_user(db_session, user_id)
+                    if mcp_tools:
+                        langchain_tools.extend(mcp_tools)
+                        logger.info(f"Added {len(mcp_tools)} MCP tools. Total tools: {len(langchain_tools)}")
+                finally:
+                    db_session.close()
+            except Exception as mcp_error:
+                logger.warning(f"Failed to load MCP tools: {mcp_error}")
+                # Continue without MCP tools if loading fails
             
             # Create middleware list for intelligent tool selection
             middleware_list = []
