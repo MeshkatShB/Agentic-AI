@@ -1,0 +1,83 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+ENV/
+env/
+.azureenv/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Database (keep db directory for mounting)
+*.db
+*.sqlite
+*.sqlite3
+db/
+
+# Data directories (will be mounted as volumes)
+chroma_db/
+user_documents/
+data/
+graphs/
+qdrant_data/
+ollama_data/
+searxng/
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test.py
+test_*.py
+*_test.py
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
