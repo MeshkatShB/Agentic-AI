@@ -17,6 +17,8 @@ import {
   Key,
   Eye,
   EyeOff,
+  Send,
+  Copy,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -86,11 +88,25 @@ const Settings = () => {
     mistral: false,
     gemini: false,
   });
+  const [telegramSettings, setTelegramSettings] = useState({
+    enabled: false,
+    has_token: false,
+    pairing_code: null,
+    is_paired: false,
+    telegram_username: null,
+    telegram_tools: null,
+    telegram_use_mcp: true,
+    telegram_mcp_server_ids: null,
+    telegram_simple_agent: false,
+    available_tools: [],
+    mcp_servers: [],
+  });
 
   useEffect(() => {
     loadSettings();
     loadApiConfig();
     checkOllamaStatus();
+    loadTelegramSettings();
   }, []);
 
   // Fetch available models when API config changes or when provider is selected
@@ -140,6 +156,76 @@ const Settings = () => {
     } catch (error) {
       setOllamaStatus("error");
     }
+  };
+
+  const loadTelegramSettings = async () => {
+    try {
+      const response = await axios.get("/settings/telegram");
+      setTelegramSettings(response.data);
+    } catch (error) {
+      console.error("Failed to load Telegram settings:", error);
+    }
+  };
+
+  const regeneratePairingCode = async () => {
+    try {
+      const response = await axios.post("/settings/telegram/pairing-code");
+      setTelegramSettings((prev) => ({
+        ...prev,
+        pairing_code: response.data.pairing_code,
+        is_paired: false,
+        telegram_username: null,
+      }));
+      toast.success("New pairing code generated");
+    } catch (error) {
+      toast.error("Failed to generate pairing code");
+    }
+  };
+
+  const copyPairingCode = () => {
+    if (telegramSettings.pairing_code) {
+      navigator.clipboard.writeText(telegramSettings.pairing_code);
+      toast.success("Pairing code copied");
+    }
+  };
+
+  const saveTelegramConfig = async () => {
+    try {
+      await axios.put("/settings/telegram/config", {
+        telegram_tools: telegramSettings.telegram_tools,
+        telegram_use_mcp: telegramSettings.telegram_use_mcp,
+        telegram_mcp_server_ids: telegramSettings.telegram_mcp_server_ids,
+        telegram_simple_agent: telegramSettings.telegram_simple_agent,
+      });
+      toast.success("Telegram chat environment saved");
+      await loadTelegramSettings();
+    } catch (error) {
+      toast.error("Failed to save Telegram config");
+    }
+  };
+
+  const toggleTelegramTool = (tool) => {
+    const current =
+      telegramSettings.telegram_tools || telegramSettings.available_tools || [];
+    const next = current.includes(tool)
+      ? current.filter((t) => t !== tool)
+      : [...current, tool];
+    setTelegramSettings((prev) => ({ ...prev, telegram_tools: next }));
+  };
+
+  const toggleTelegramMcpServer = (id) => {
+    const allIds = (telegramSettings.mcp_servers || []).map((s) => s.id);
+    const current = telegramSettings.telegram_mcp_server_ids;
+    let next;
+    if (current == null) {
+      next = allIds.filter((i) => i !== id);
+    } else {
+      next = current.includes(id)
+        ? current.filter((i) => i !== id)
+        : [...current, id];
+    }
+    if (next.length === allIds.length) next = null;
+    setTelegramSettings((prev) => ({ ...prev, telegram_mcp_server_ids: next }));
   };
 
   const fetchProviderModels = async (provider) => {
@@ -286,6 +372,7 @@ const Settings = () => {
     { id: "profile", label: "Profile", icon: User },
     { id: "preferences", label: "AI Settings", icon: Sliders },
     { id: "paths", label: "File Access", icon: FolderOpen },
+    { id: "telegram", label: "Telegram", icon: Send },
     { id: "security", label: "Security", icon: Lock },
     { id: "system", label: "System", icon: Server },
   ];
@@ -1461,6 +1548,264 @@ const Settings = () => {
                   {isLoading ? "Saving..." : "Save Path Settings"}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Telegram tab */}
+          {activeTab === "telegram" && (
+            <div className="glass-dark rounded-xl p-6">
+              <h2 className="text-xl font-semibold text-white mb-4">
+                Telegram Bot
+              </h2>
+              <p className="text-gray-400 mb-6">
+                Pair your Telegram account with this app. Only registered users
+                can use the bot after pairing with a code.
+              </p>
+
+              {!telegramSettings.has_token ? (
+                <div className="p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                  <p className="text-amber-400 text-sm">
+                    Telegram bot is not configured. Set{" "}
+                    <code className="bg-black/30 px-1 rounded">
+                      TELEGRAM_BOT_TOKEN
+                    </code>{" "}
+                    and{" "}
+                    <code className="bg-black/30 px-1 rounded">
+                      ENABLE_TELEGRAM_BOT=true
+                    </code>{" "}
+                    in the server environment (e.g.{" "}
+                    <code className="bg-black/30 px-1 rounded">.env</code>) to
+                    enable it. Create a bot via @BotFather on Telegram to get a
+                    token.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {telegramSettings.is_paired ? (
+                    <div className="flex items-center space-x-2 p-3 bg-green-500/10 rounded-lg border border-green-500/30">
+                      <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
+                      <span className="text-green-400">
+                        Paired with Telegram
+                        {telegramSettings.telegram_username
+                          ? ` as @${telegramSettings.telegram_username}`
+                          : ""}
+                        . You can message the bot to chat with the AI.
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                          Your pairing code
+                        </label>
+                        <div className="flex items-center space-x-2">
+                          <code className="flex-1 px-4 py-3 bg-gray-800/70 text-primary-400 font-mono text-lg tracking-widest rounded-lg border border-gray-700">
+                            {telegramSettings.pairing_code || "—"}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={copyPairingCode}
+                            disabled={!telegramSettings.pairing_code}
+                            className="p-3 rounded-lg bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white border border-gray-700 disabled:opacity-50"
+                            title="Copy code"
+                          >
+                            <Copy className="w-5 h-5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={regeneratePairingCode}
+                            className="px-4 py-2 rounded-lg bg-primary-500/20 text-primary-400 hover:bg-primary-500/30 border border-primary-500/30"
+                          >
+                            Regenerate
+                          </button>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700/50 text-sm text-gray-300 space-y-2">
+                        <p className="font-medium text-white">How to pair</p>
+                        <ol className="list-decimal list-inside space-y-1">
+                          <li>
+                            Open Telegram and find your bot (from the token
+                            creator).
+                          </li>
+                          <li>
+                            Send:{" "}
+                            <code className="bg-black/30 px-1 rounded">
+                              /start pair YOUR_CODE
+                            </code>{" "}
+                            (replace YOUR_CODE with the code above).
+                          </li>
+                          <li>
+                            Or send:{" "}
+                            <code className="bg-black/30 px-1 rounded">
+                              /pair YOUR_CODE
+                            </code>
+                            .
+                          </li>
+                          <li>
+                            After pairing, send any message to chat with the AI.
+                          </li>
+                        </ol>
+                      </div>
+                    </>
+                  )}
+                  {/* Chat environment: tools and MCP */}
+                  <div className="border-t border-gray-700/50 pt-6 mt-6">
+                    <h3 className="text-lg font-semibold text-white mb-3">
+                      Telegram chat environment
+                    </h3>
+                    <p className="text-gray-400 text-sm mb-4">
+                      Choose which tools and MCP servers the bot can use. You
+                      can turn off MCP or use a simpler agent if you get model
+                      errors.
+                    </p>
+
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-sm font-medium text-gray-300">
+                            Tools for Telegram
+                          </label>
+                          <label className="flex items-center gap-2 text-sm text-gray-400">
+                            <input
+                              type="checkbox"
+                              checked={
+                                telegramSettings.telegram_tools === null ||
+                                telegramSettings.telegram_tools === undefined
+                              }
+                              onChange={(e) =>
+                                setTelegramSettings((prev) => ({
+                                  ...prev,
+                                  telegram_tools: e.target.checked
+                                    ? null
+                                    : prev.available_tools || [],
+                                }))
+                              }
+                              className="rounded text-primary-500"
+                            />
+                            Use same as web
+                          </label>
+                        </div>
+                        {telegramSettings.telegram_tools !== null &&
+                          telegramSettings.telegram_tools !== undefined && (
+                            <div className="flex flex-wrap gap-2 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50 max-h-32 overflow-y-auto">
+                              {(telegramSettings.available_tools || []).map(
+                                (tool) => (
+                                  <label
+                                    key={tool}
+                                    className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={(
+                                        telegramSettings.telegram_tools || []
+                                      ).includes(tool)}
+                                      onChange={() => toggleTelegramTool(tool)}
+                                      className="rounded text-primary-500"
+                                    />
+                                    {tool}
+                                  </label>
+                                )
+                              )}
+                            </div>
+                          )}
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <input
+                          type="checkbox"
+                          id="telegram_use_mcp"
+                          checked={telegramSettings.telegram_use_mcp}
+                          onChange={(e) =>
+                            setTelegramSettings((prev) => ({
+                              ...prev,
+                              telegram_use_mcp: e.target.checked,
+                            }))
+                          }
+                          className="w-4 h-4 text-primary-500 rounded"
+                        />
+                        <label
+                          htmlFor="telegram_use_mcp"
+                          className="text-sm text-gray-300"
+                        >
+                          Use MCP servers in Telegram
+                        </label>
+                      </div>
+                      {telegramSettings.telegram_use_mcp &&
+                        (telegramSettings.mcp_servers || []).length > 0 && (
+                          <div className="pl-6">
+                            <p className="text-xs text-gray-400 mb-2">
+                              Select servers (leave all = use all)
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {(telegramSettings.mcp_servers || []).map((s) => (
+                                <label
+                                  key={s.id}
+                                  className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      telegramSettings.telegram_mcp_server_ids ==
+                                      null
+                                        ? true
+                                        : (
+                                            telegramSettings.telegram_mcp_server_ids ||
+                                            []
+                                          ).includes(s.id)
+                                    }
+                                    onChange={() =>
+                                      toggleTelegramMcpServer(s.id)
+                                    }
+                                    className="rounded text-primary-500"
+                                  />
+                                  {s.name}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                      <div className="flex items-center space-x-3">
+                        <input
+                          type="checkbox"
+                          id="telegram_simple_agent"
+                          checked={telegramSettings.telegram_simple_agent}
+                          onChange={(e) =>
+                            setTelegramSettings((prev) => ({
+                              ...prev,
+                              telegram_simple_agent: e.target.checked,
+                            }))
+                          }
+                          className="w-4 h-4 text-primary-500 rounded"
+                        />
+                        <label
+                          htmlFor="telegram_simple_agent"
+                          className="text-sm text-gray-300"
+                        >
+                          Use simple agent (recommended if you get
+                          &quot;Expected dict response&quot; or model errors)
+                        </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={saveTelegramConfig}
+                        className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+                      >
+                        Save Telegram environment
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadTelegramSettings}
+                    className="px-4 py-2 rounded-lg bg-gray-800/50 text-gray-300 hover:text-white border border-gray-700"
+                  >
+                    Refresh status
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
