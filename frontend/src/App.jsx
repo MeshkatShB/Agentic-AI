@@ -14,6 +14,7 @@ import Documents from "./pages/Documents";
 import BrowserUse from "./pages/BrowserUse";
 import AddTool from "./pages/AddTool";
 import EditTool from "./pages/EditTool";
+import MCPServers from "./pages/MCPServers";
 
 // Components
 import PrivateRoute from "./components/PrivateRoute";
@@ -99,6 +100,7 @@ function App() {
             <Route path="/browser-use" element={<BrowserUse />} />
             <Route path="/add-tool" element={<AddTool />} />
             <Route path="/edit-tool/:toolId" element={<EditTool />} />
+            <Route path="/mcp-servers" element={<MCPServers />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>

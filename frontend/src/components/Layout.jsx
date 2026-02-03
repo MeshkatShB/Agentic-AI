@@ -15,6 +15,7 @@ import {
   ChevronRight,
   FileText,
   Globe,
+  Server,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { useThemeStore } from "../stores/themeStore";
@@ -81,6 +82,7 @@ const Layout = () => {
     { path: "/chat", icon: MessageSquare, label: "Chat" },
     { path: "/documents", icon: FileText, label: "Documents" },
     { path: "/tools", icon: Wrench, label: "Tools" },
+    { path: "/mcp-servers", icon: Server, label: "MCP Servers" },
     { path: "/browser-use", icon: Globe, label: "Browser Automation" },
   ];
 
