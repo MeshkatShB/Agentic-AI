@@ -1,0 +1,26 @@
+# Example docker-compose.override.yml for local development
+# Copy this file to docker-compose.override.yml and customize as needed
+# This file is automatically loaded by docker-compose and overrides the main docker-compose.yml
+
+version: "3.8"
+
+services:
+  backend:
+    # Mount source code for hot reload (requires uvicorn --reload)
+    volumes:
+      - ./backend:/app/backend:ro  # Read-only mount
+    # Override command for development with hot reload
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "3333", "--reload"]
+    environment:
+      - DEBUG=true
+
+  frontend:
+    # For development, you might want to use the dev server instead
+    # Uncomment below and comment out the frontend service in main docker-compose.yml
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.frontend.dev
+    # command: npm run dev
+    # ports:
+    #   - "5174:5174"
+
