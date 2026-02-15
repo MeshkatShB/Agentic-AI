@@ -206,6 +206,7 @@ IMPORTANT RULES:
    - The user explicitly asks you to search, find, or get information that is NOT in the provided context
    - You need to access files, databases, or external resources
    - The user asks you to perform an action (like reading a file, calculating, etc.)
+   When the user asks to "search the web", "search for X", "find news on X", or similar, you MUST call the web_search tool with their query, then summarize or quote the actual results in your reply. Do not reply with only a generic phrase like "I've completed the task"—include what you found.
 
 3. When webpage content is provided, treat it as the source of truth and answer questions based on it directly. Do not say "I've completed the task" - instead, provide a helpful answer based on the webpage content.
 
@@ -219,9 +220,11 @@ IMPORTANT RULES:
 
 6. Use tools when appropriate to answer user questions, but prioritize using provided context when available.
 
-7. Be concise and accurate in your responses
+7. Be concise and accurate in your responses.
 
-8. Always provide helpful and accurate information"""
+8. REMINDERS AND SCHEDULING: When the user asks to set a reminder, be reminded of something, or schedule a task at a date/time (e.g. "remind me to X", "remind to X on DATE at TIME", "schedule ..."), you MUST call the schedule_job tool with job_type (e.g. "reminder"), title, and run_at. Replying only with a success message does NOT create the job—you must invoke the tool so the reminder is actually saved and will run.
+
+9. Always provide helpful and accurate information."""
     
     def _create_agent(self, tools: List, middleware: Optional[List] = None):
         """Create LangChain agent with tools and optional middleware."""
@@ -247,10 +250,14 @@ IMPORTANT RULES:
         message_history: Optional[List] = None,
         mcp_server_ids: Optional[List[int]] = None,
         use_tool_selector_middleware: bool = True,
+        image_base64_list: Optional[List[str]] = None,
+        invocation_source: Optional[str] = None,
     ) -> AsyncGenerator[Dict, None]:
         """Run the agent with a query and optional message history.
         mcp_server_ids: when None, load all user MCP servers; when [], load none; when [id,...], load only those.
         use_tool_selector_middleware: when False, skip LLMToolSelectorMiddleware (avoids model dict-response issues).
+        image_base64_list: optional list of base64-encoded images for vision (chatbot image support).
+        invocation_source: e.g. 'telegram' so tools like schedule_job can store the correct source.
         """
         start_time = datetime.utcnow()
         self.steps = []
@@ -259,7 +266,9 @@ IMPORTANT RULES:
         
         try:
             # Convert tools to LangChain format with user context
-            langchain_tools = LangChainToolAdapter.convert_tools_for_user(allowed_tools, user_id=user_id)
+            langchain_tools = LangChainToolAdapter.convert_tools_for_user(
+                allowed_tools, user_id=user_id, invocation_source=invocation_source
+            )
             logger.info(f"Converted {len(langchain_tools)} tools for agent: {[t.name for t in langchain_tools]}")
             
             # Load MCP tools if available (mcp_server_ids=None means all; [] means none)
@@ -308,9 +317,6 @@ IMPORTANT RULES:
                 except Exception as e:
                     logger.warning(f"Failed to create LLMToolSelectorMiddleware: {e}. Continuing without it.")
             
-            # Create agent with tools and middleware
-            self._create_agent(langchain_tools, middleware=middleware_list)
-            
             # Build message history from previous messages
             messages = []
             if message_history:
@@ -331,54 +337,99 @@ IMPORTANT RULES:
                         messages.append(tool_msg)
                 
                 logger.info(f"Loaded {len(messages)} messages from conversation history")
-            
-            # Add current query
-            messages.append(HumanMessage(content=query))
-            
+
+            # Build current user message: text only or multimodal (text + images)
+            if image_base64_list:
+                # LangChain multimodal format: text part + image_url parts (OpenAI-style; Ollama adapter converts to images array)
+                content_parts: List[Dict[str, Any]] = [{"type": "text", "text": query or "What do you see in these images?"}]
+                for b64 in image_base64_list:
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"}
+                    })
+                messages.append(HumanMessage(content=content_parts))
+            else:
+                messages.append(HumanMessage(content=query))
+
             # Prepare initial state with full message history
             initial_state = {
                 "messages": messages
             }
             logger.info(f"Initial state prepared with {len(messages)} total messages (including current query)")
-            
-            # Stream agent execution
-            if stream:
-                async for chunk in self._stream_agent_execution(initial_state, query, conversation_id, user_id, start_time):
-                    yield chunk
-            else:
-                # Non-streaming execution
-                result = await self.agent.ainvoke(initial_state)
-                final_answer = self._extract_final_answer(result)
-                
-                # Create response
-                end_time = datetime.utcnow()
-                response_dict = {
-                    "type": "complete",
-                    "response": AgentResponse(
-                        conversation_id=conversation_id,
-                        user_id=user_id,
-                        query=query,
-                        steps=self.steps,
-                        final_answer=final_answer,
-                        total_tokens=self.total_tokens,
-                        execution_time=(end_time - start_time).total_seconds(),
-                        success=True,
-                    ).model_dump(),
-                }
-                yield serialize_datetime(response_dict)
-        
-        except AssertionError as e:
-            err_msg = str(e)
-            if "Expected dict response" in err_msg and "NoneType" in err_msg:
-                friendly = (
-                    "The AI model returned an unexpected response. "
-                    "This can happen with some models. Try again, or switch to another model in Settings → AI Settings."
-                )
-                logger.warning(f"Agent model response error (model compatibility): {e}")
-                yield {"type": "error", "error": friendly}
-            else:
-                logger.error(f"Agent assertion error: {e}", exc_info=True)
-                yield {"type": "error", "error": err_msg}
+
+            # Create agent with tools and middleware (LangChain middleware implementation)
+            self._create_agent(langchain_tools, middleware=middleware_list)
+
+            try:
+                if stream:
+                    async for chunk in self._stream_agent_execution(initial_state, query, conversation_id, user_id, start_time):
+                        yield chunk
+                else:
+                    result = await self.agent.ainvoke(initial_state)
+                    final_answer = self._extract_final_answer(result)
+                    end_time = datetime.utcnow()
+                    response_dict = {
+                        "type": "complete",
+                        "response": AgentResponse(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            query=query,
+                            steps=self.steps,
+                            final_answer=final_answer,
+                            total_tokens=self.total_tokens,
+                            execution_time=(end_time - start_time).total_seconds(),
+                            success=True,
+                        ).model_dump(),
+                    }
+                    yield serialize_datetime(response_dict)
+            except AssertionError as e:
+                err_msg = str(e)
+                if "Expected dict response" in err_msg and "NoneType" in err_msg and middleware_list:
+                    # Tool selector middleware expects a dict; this model returned something else.
+                    # Retry without the middleware so the model uses tools directly (same as "simple agent").
+                    logger.warning(
+                        "Tool selector got unexpected response from model, retrying without middleware: %s",
+                        e,
+                    )
+                    self._create_agent(langchain_tools, middleware=[])
+                    self.steps = []
+                    try:
+                        if stream:
+                            async for chunk in self._stream_agent_execution(
+                                initial_state, query, conversation_id, user_id, start_time
+                            ):
+                                yield chunk
+                        else:
+                            result = await self.agent.ainvoke(initial_state)
+                            final_answer = self._extract_final_answer(result)
+                            end_time = datetime.utcnow()
+                            response_dict = {
+                                "type": "complete",
+                                "response": AgentResponse(
+                                    conversation_id=conversation_id,
+                                    user_id=user_id,
+                                    query=query,
+                                    steps=self.steps,
+                                    final_answer=final_answer,
+                                    total_tokens=self.total_tokens,
+                                    execution_time=(end_time - start_time).total_seconds(),
+                                    success=True,
+                                ).model_dump(),
+                            }
+                            yield serialize_datetime(response_dict)
+                    except Exception as retry_e:
+                        logger.error(f"Retry without middleware failed: {retry_e}", exc_info=True)
+                        yield {"type": "error", "error": str(retry_e)}
+                elif "Expected dict response" in err_msg and "NoneType" in err_msg:
+                    friendly = (
+                        "The AI model returned an unexpected response. "
+                        "Try again or switch to another model in Settings → AI Settings."
+                    )
+                    logger.warning(f"Agent model response error (model compatibility): {e}")
+                    yield {"type": "error", "error": friendly}
+                else:
+                    logger.error(f"Agent assertion error: {e}", exc_info=True)
+                    yield {"type": "error", "error": err_msg}
         except Exception as e:
             logger.error(f"Agent execution error: {e}", exc_info=True)
             yield {
@@ -898,19 +949,34 @@ IMPORTANT RULES:
                             final_ai_content = str(message.content)
                         break
         
-        # If we have tool results but no final answer, create a helpful message
-        if has_tool_results and not final_ai_content:
-            # Check if there are any tool results to reference
+        # If we have tool results but no final answer (or model gave a generic one), use tool output
+        generic_phrases = (
+            "i've completed the task",
+            "i've completed the task using the available tools",
+            "task completed",
+        )
+        is_generic = final_ai_content and any(
+            p in final_ai_content.lower().strip() for p in generic_phrases
+        ) and len(final_ai_content.strip()) < 120
+        if has_tool_results and (not final_ai_content or is_generic):
             tool_results = [msg for msg in messages if isinstance(msg, ToolMessage)]
             if tool_results:
-                # Check if tool results are empty
                 last_tool_result = str(tool_results[-1].content) if tool_results else ""
-                if not last_tool_result or last_tool_result.strip() == "[]" or last_tool_result.strip() == "{}":
-                    final_ai_content = "I searched through the files but didn't find any matches for your query. The search returned no results."
+                if not last_tool_result or last_tool_result.strip() in ("[]", "{}"):
+                    final_ai_content = "I searched but didn't find any results for your query."
+                elif last_tool_result.strip().startswith("Error:"):
+                    err_body = last_tool_result.strip()
+                    if len(err_body) > 200:
+                        err_body = err_body[:197] + "..."
+                    final_ai_content = f"I couldn't complete that. {err_body}"
                 else:
-                    final_ai_content = "I've completed the search using the available tools. Here are the results I found."
+                    # Show actual tool output so user sees search results etc. (truncate if huge)
+                    raw = last_tool_result.strip()
+                    if len(raw) > 3500:
+                        raw = raw[:3497] + "..."
+                    final_ai_content = f"Here are the results:\n\n{raw}"
             else:
-                final_ai_content = "I've completed the task using the available tools."
+                final_ai_content = "I used the tools but couldn't format a reply. Try asking again."
         
         # If no AI message after tools, get the last AI message
         if not final_ai_content:
