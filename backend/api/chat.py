@@ -13,6 +13,23 @@ from backend.auth import get_current_user
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
 from backend.utils.file_parser import extract_file_content
+import base64
+
+# MIME types and extensions treated as images for chatbot vision
+IMAGE_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+def _is_image_file(filename: str, content_type: Optional[str] = None) -> bool:
+    if content_type:
+        ct = content_type.lower()
+        if ct.startswith("image/"):
+            return True
+        if ct in ("jpeg", "jpg", "png", "gif", "webp"):
+            return True
+    name = (filename or "").lower()
+    if not name.startswith("."):
+        name = "." + name
+    return any(name.endswith(e) or name == e for e in IMAGE_EXTENSIONS)
 
 router = APIRouter()
 
@@ -286,30 +303,34 @@ Webpage Content:
 Now, please answer the user's question about this webpage:"""
         message_content = context_section + "\n\n" + message_content
     
+    image_base64_list: List[str] = []
     if request.file_contents:
         for file_data in request.file_contents:
             filename = file_data.get("filename", "Unknown")
             content = file_data.get("content", "")
-            metadata = file_data.get("metadata", {})
-            
-            if content:
+            metadata = file_data.get("metadata", {}) or {}
+            is_image = metadata.get("is_image") or _is_image_file(filename, metadata.get("file_type", ""))
+
+            if is_image and content:
+                # Images: pass base64 to agent for vision (no text extraction)
+                image_base64_list.append(content)
+            elif content:
                 file_sections.append(f"\n\n--- Content from file: {filename} ---\n{content}\n--- End of file: {filename} ---")
-            
-            # Store file attachment metadata
+
             file_attachments_data.append({
                 "filename": filename,
                 "size": metadata.get("file_size", 0),
                 "type": metadata.get("file_type", "unknown")
             })
-    
+
     # Use file_attachments from request if provided (for tracking)
     if request.file_attachments:
         file_attachments_data = request.file_attachments
-        
-    # Append file sections to message content if any files were provided
+
+    # Append file sections to message content if any text files were provided
     if file_sections:
         message_content = request.content + "\n\n" + "\n".join(file_sections)
-    
+
     async def generate():
         """Generate streaming response."""
         try:
@@ -321,7 +342,8 @@ Now, please answer the user's question about this webpage:"""
                 stream=request.stream,
                 selected_tools=request.selected_tools,
                 use_deepagent=request.use_deepagent,
-                file_attachments=file_attachments_data if file_attachments_data else None
+                file_attachments=file_attachments_data if file_attachments_data else None,
+                image_base64_list=image_base64_list if image_base64_list else None,
             ):
                 # Format as SSE
                 if request.stream:
@@ -381,13 +403,30 @@ async def upload_file(
         )
     
     try:
-        # Extract content from file
+        content_type = getattr(file, "content_type", None) or ""
+        if _is_image_file(file.filename or "", content_type):
+            # Return base64 for images so the frontend can send them for vision
+            content_b64 = base64.b64encode(file_content).decode("ascii")
+            metadata = {
+                "filename": file.filename,
+                "file_type": (content_type or "image").split("/")[-1],
+                "file_size": len(file_content),
+                "is_image": True,
+            }
+            return {
+                "filename": file.filename,
+                "content": content_b64,
+                "metadata": metadata,
+                "success": True,
+            }
+        # Extract text content from non-image files
         content, metadata = await extract_file_content(
             file_content,
             file.filename,
             extract_metadata=True
         )
-        
+        if metadata is None:
+            metadata = {}
         return {
             "filename": file.filename,
             "content": content,

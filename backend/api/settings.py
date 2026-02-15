@@ -24,6 +24,7 @@ class UserSettings(BaseModel):
     max_steps: int = app_settings.MAX_STEPS_PER_REQUEST
     max_tokens: int = app_settings.MODEL_MAX_TOKENS
     require_confirmation: bool = app_settings.REQUIRE_TOOL_CONFIRMATION
+    timezone: Optional[str] = None  # IANA timezone for reminders (e.g. Asia/Tehran, America/New_York)
 
 
 class SystemInfo(BaseModel):
@@ -39,6 +40,15 @@ class PathSettings(BaseModel):
     """Path settings."""
     allowed_paths: List[str]
     blocked_paths: List[str]
+
+
+class ExchangeSettings(BaseModel):
+    """Exchange (EWS) configuration for email/calendar/tasks."""
+    enabled: bool = False
+    server: Optional[str] = None
+    email: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 
 class APIConfigSettings(BaseModel):
@@ -73,7 +83,8 @@ async def get_user_settings(
         temperature=prefs.get("temperature", app_settings.MODEL_TEMPERATURE),
         max_steps=prefs.get("max_steps", app_settings.MAX_STEPS_PER_REQUEST),
         max_tokens=prefs.get("max_tokens", app_settings.MODEL_MAX_TOKENS),
-        require_confirmation=prefs.get("require_confirmation", app_settings.REQUIRE_TOOL_CONFIRMATION)
+        require_confirmation=prefs.get("require_confirmation", app_settings.REQUIRE_TOOL_CONFIRMATION),
+        timezone=prefs.get("timezone"),
     )
 
 
@@ -525,6 +536,92 @@ async def get_provider_models(
             "error": f"Failed to fetch models: {str(e)}",
             "models": []
         }
+
+
+# --- Exchange (EWS) settings ---
+@router.get("/exchange", response_model=ExchangeSettings)
+async def get_exchange_settings(
+    current_user: User = Depends(get_current_user)
+):
+    """Get Exchange (EWS) configuration. Password is masked in response."""
+    prefs = current_user.preferences or {}
+    exchange = prefs.get("exchange_config", {})
+    password = exchange.get("password")
+    return ExchangeSettings(
+        enabled=exchange.get("enabled", False),
+        server=exchange.get("server"),
+        email=exchange.get("email"),
+        username=exchange.get("username"),
+        password=("***" + password[-4:] if password and len(password) > 4 else ("***" if password else None)),
+    )
+
+
+@router.put("/exchange", response_model=ExchangeSettings)
+async def update_exchange_settings(
+    settings: ExchangeSettings,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update Exchange (EWS) configuration."""
+    from sqlalchemy.orm.attributes import flag_modified
+    prefs = current_user.preferences or {}
+    exchange = prefs.get("exchange_config", {}).copy()
+    # Only update fields that are not masked (password: if starts with ***, keep existing)
+    exchange["enabled"] = settings.enabled
+    if settings.server is not None:
+        exchange["server"] = settings.server
+    if settings.email is not None:
+        exchange["email"] = settings.email
+    if settings.username is not None:
+        exchange["username"] = settings.username
+    if settings.password is not None and not (isinstance(settings.password, str) and settings.password.startswith("***")):
+        exchange["password"] = settings.password
+    prefs["exchange_config"] = exchange
+    current_user.preferences = prefs
+    flag_modified(current_user, "preferences")
+    db.commit()
+    db.refresh(current_user)
+    # Return with masked password
+    out_password = exchange.get("password")
+    return ExchangeSettings(
+        enabled=exchange["enabled"],
+        server=exchange.get("server"),
+        email=exchange.get("email"),
+        username=exchange.get("username"),
+        password=("***" + out_password[-4:] if out_password and len(out_password) > 4 else ("***" if out_password else None)),
+    )
+
+
+@router.post("/exchange/test")
+async def test_exchange_connection(
+    current_user: User = Depends(get_current_user)
+):
+    """Test Exchange (EWS) connection with current user's settings."""
+    prefs = current_user.preferences or {}
+    exchange = prefs.get("exchange_config", {})
+    if not exchange.get("enabled"):
+        return {"status": "error", "message": "Exchange is not enabled"}
+    server = exchange.get("server")
+    email = exchange.get("email")
+    username = exchange.get("username")
+    password = exchange.get("password")
+    if not all([server, email, username, password]):
+        return {"status": "error", "message": "Server, email, username, and password are required"}
+    try:
+        from exchangelib import Credentials, Configuration, Account, DELEGATE
+        creds = Credentials(username=username, password=password)
+        config = Configuration(server=server, credentials=creds)
+        account = Account(
+            primary_smtp_address=email,
+            config=config,
+            autodiscover=False,
+            access_type=DELEGATE,
+        )
+        # Touch inbox to verify connection
+        _ = list(account.inbox.all()[:1])
+        return {"status": "success", "message": "Connected to Exchange successfully"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 # --- Telegram bot settings (pairing by username) ---
