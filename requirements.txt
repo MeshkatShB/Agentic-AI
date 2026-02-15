@@ -57,10 +57,14 @@ browser-use==0.11.1
 # Telegram Bot
 python-telegram-bot==22.6
 
+# Exchange (EWS) - email, calendar, tasks
+exchangelib==5.6.0
+
 # Utilities
 numpy==1.26.4
 pandas==2.1.4
 python-dateutil==2.8.2
+croniter==6.0.0
 psutil==7.1.0
 
 # Testing
