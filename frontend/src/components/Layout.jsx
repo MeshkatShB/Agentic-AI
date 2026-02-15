@@ -16,6 +16,7 @@ import {
   FileText,
   Globe,
   Server,
+  Bell,
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 import { useThemeStore } from "../stores/themeStore";
@@ -82,6 +83,7 @@ const Layout = () => {
     { path: "/chat", icon: MessageSquare, label: "Chat" },
     { path: "/documents", icon: FileText, label: "Documents" },
     { path: "/tools", icon: Wrench, label: "Tools" },
+    { path: "/cron-jobs", icon: Bell, label: "Cron Jobs" },
     { path: "/mcp-servers", icon: Server, label: "MCP Servers" },
     { path: "/browser-use", icon: Globe, label: "Browser Automation" },
   ];
@@ -242,9 +244,13 @@ const Layout = () => {
             {/* Current Model Display */}
             {currentModel && (
               <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-500/30">
-                <span className="text-xs font-medium text-blue-400">{currentModel.provider}</span>
+                <span className="text-xs font-medium text-blue-400">
+                  {currentModel.provider}
+                </span>
                 <span className="text-xs text-gray-400">/</span>
-                <span className="text-xs text-blue-300">{currentModel.model}</span>
+                <span className="text-xs text-blue-300">
+                  {currentModel.model}
+                </span>
               </div>
             )}
 
