@@ -50,7 +50,8 @@ class ToolRegistry:
             HttpRequestTool,
             DatabaseQueryTool,
             WeatherAPITool,
-            CustomAPITool
+            CustomAPITool,
+            ScheduleJobTool,
         )
         from .implementations.advanced_tools import (
             SystemInfoTool,
@@ -85,11 +86,40 @@ class ToolRegistry:
             NetworkToolkit,
             
             # Database tools
-            DatabaseQueryTool
+            DatabaseQueryTool,
+            # Cron jobs (scheduled by chatbot)
+            ScheduleJobTool,
         ]
         
         for tool_class in default_tools:
             self.register(tool_class)
+        
+        # Exchange (EWS) tools - only when exchangelib is available
+        try:
+            from .implementations.exchange_tools import (
+                EWS_AVAILABLE,
+                ExchangeListEmailsTool,
+                ExchangeGetEmailTool,
+                ExchangeSendEmailTool,
+                ExchangeListCalendarTool,
+                ExchangeCreateEventTool,
+                ExchangeListTasksTool,
+                ExchangeCreateTaskTool,
+            )
+            if EWS_AVAILABLE:
+                exchange_tools = [
+                    ExchangeListEmailsTool,
+                    ExchangeGetEmailTool,
+                    ExchangeSendEmailTool,
+                    ExchangeListCalendarTool,
+                    ExchangeCreateEventTool,
+                    ExchangeListTasksTool,
+                    ExchangeCreateTaskTool,
+                ]
+                for tool_class in exchange_tools:
+                    self.register(tool_class)
+        except ImportError:
+            pass
     
     def register(self, tool_class: Type[BaseTool]) -> bool:
         """Register a new tool."""
