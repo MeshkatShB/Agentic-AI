@@ -77,7 +77,8 @@ class DeepAgentWrapper:
         user_id: int,
         allowed_tools: List[str],
         stream: bool = True,
-        message_history: Optional[List] = None
+        message_history: Optional[List] = None,
+        image_base64_list: Optional[List[str]] = None,
     ) -> AsyncGenerator[Dict, None]:
         """Run DeepAgent with query and optional message history."""
         
@@ -102,7 +103,8 @@ class DeepAgentWrapper:
                 user_id=user_id,
                 allowed_tools=allowed_tools,
                 stream=stream,
-                message_history=message_history
+                message_history=message_history,
+                image_base64_list=image_base64_list,
             ):
                 yield result
             return
@@ -123,7 +125,7 @@ class DeepAgentWrapper:
                 # Fallback to LangChain agent
                 from backend.agent.agent import Agent
                 agent = Agent(model=self.model)
-                async for result in agent.run(query, conversation_id, user_id, allowed_tools, stream, message_history=message_history):
+                async for result in agent.run(query, conversation_id, user_id, allowed_tools, stream, message_history=message_history, image_base64_list=image_base64_list):
                     yield result
                 return
             
@@ -156,6 +158,6 @@ class DeepAgentWrapper:
             # Fallback to regular agent
             from backend.agent.agent import Agent
             fallback_agent = Agent(model=self.model)
-            async for result in fallback_agent.run(query, conversation_id, user_id, allowed_tools, stream, message_history=message_history):
+            async for result in fallback_agent.run(query, conversation_id, user_id, allowed_tools, stream, message_history=message_history, image_base64_list=image_base64_list):
                 yield result
 
