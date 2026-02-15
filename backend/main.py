@@ -51,7 +51,7 @@ from backend.models import Base, engine, get_db, User, Conversation, Message
 from backend.auth import authenticate_user, create_access_token, get_current_user, get_password_hash
 from backend.agent import agent_executor
 from backend.storage import get_vector_store
-from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router, browser_use_router, mcp_router
+from backend.api import auth_router, chat_router, tools_router, settings_router, custom_tools_router, documents_router, browser_use_router, mcp_router, cron_jobs_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -80,6 +80,30 @@ try:
     migrate_telegram_pairing()
 except Exception as e:
     logger.warning(f"Telegram pairings table migration check failed (this is OK if table already exists): {e}")
+
+try:
+    from backend.migrations.create_cron_jobs_table import migrate as migrate_cron_jobs
+    migrate_cron_jobs()
+except Exception as e:
+    logger.warning(f"Cron jobs table migration check failed (this is OK if table already exists): {e}")
+
+try:
+    from backend.migrations.create_user_notifications_table import migrate as migrate_user_notifications
+    migrate_user_notifications()
+except Exception as e:
+    logger.warning(f"User notifications table migration check failed (this is OK if table already exists): {e}")
+
+try:
+    from backend.migrations.add_cron_job_schedule_timezone import migrate as migrate_cron_timezone
+    migrate_cron_timezone()
+except Exception as e:
+    logger.warning(f"Cron job schedule_timezone migration check failed: {e}")
+
+try:
+    from backend.migrations.create_cron_job_runs_table import migrate as migrate_cron_job_runs
+    migrate_cron_job_runs()
+except Exception as e:
+    logger.warning(f"Cron job runs table migration check failed (this is OK if table already exists): {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -126,6 +150,7 @@ app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
 app.include_router(browser_use_router, prefix="/api/browser-use", tags=["Browser Use"])
 app.include_router(mcp_router, prefix="/api/mcp", tags=["MCP Servers"])
+app.include_router(cron_jobs_router, prefix="/api/cron-jobs", tags=["Cron Jobs"])
 
 
 @app.get("/health")
@@ -229,6 +254,13 @@ async def startup_event():
             await start_telegram_bot()
         except Exception as e:
             logger.warning(f"Telegram bot failed to start: {e}")
+
+    # Start cron job runner (runs due jobs created by the chatbot)
+    try:
+        from backend.services.cron_job_runner import start_cron_job_runner
+        start_cron_job_runner()
+    except Exception as e:
+        logger.warning(f"Cron job runner failed to start: {e}")
     
     # Log startup
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} started")
@@ -247,6 +279,13 @@ async def shutdown_event():
         await stop_telegram_bot()
     except Exception as e:
         logger.warning(f"Telegram bot shutdown: {e}")
+
+    # Stop cron job runner
+    try:
+        from backend.services.cron_job_runner import stop_cron_job_runner
+        stop_cron_job_runner()
+    except Exception as e:
+        logger.warning(f"Cron job runner shutdown: {e}")
     
     # Clear all agents
     agent_executor.clear_all_agents()
