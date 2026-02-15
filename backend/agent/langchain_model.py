@@ -1,5 +1,6 @@
 """LangChain model adapter for Ollama."""
 
+import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage, ToolCall
@@ -15,6 +16,29 @@ import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def _human_message_to_ollama(msg: "HumanMessage") -> Dict[str, Any]:
+    """Convert HumanMessage to Ollama API format. Supports text and multimodal (text + images)."""
+    content = msg.content
+    if isinstance(content, list):
+        text_parts = []
+        images = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                    # data:image/png;base64,<b64> or data:image/jpeg;base64,<b64>
+                    m = re.match(r"data:image/[^;]+;base64,(.+)", url)
+                    if m:
+                        images.append(m.group(1).strip())
+        out = {"role": "user", "content": "\n".join(text_parts) or "What do you see?"}
+        if images:
+            out["images"] = images
+        return out
+    return {"role": "user", "content": content if isinstance(content, str) else str(content)}
 
 
 class OllamaChatModel(BaseChatModel):
@@ -70,7 +94,7 @@ class OllamaChatModel(BaseChatModel):
         ollama_messages = []
         for msg in messages:
             if isinstance(msg, HumanMessage):
-                ollama_messages.append({"role": "user", "content": msg.content})
+                ollama_messages.append(_human_message_to_ollama(msg))
             elif isinstance(msg, AIMessage):
                 ollama_messages.append({"role": "assistant", "content": msg.content})
             elif isinstance(msg, SystemMessage):
@@ -174,7 +198,7 @@ class OllamaChatModel(BaseChatModel):
         ollama_messages = []
         for msg in messages:
             if isinstance(msg, HumanMessage):
-                ollama_messages.append({"role": "user", "content": msg.content})
+                ollama_messages.append(_human_message_to_ollama(msg))
             elif isinstance(msg, AIMessage):
                 ollama_messages.append({"role": "assistant", "content": msg.content})
             elif isinstance(msg, SystemMessage):
