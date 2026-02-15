@@ -100,11 +100,13 @@ class AgentExecutor:
         selected_tools: Optional[list] = None,
         use_deepagent: bool = False,
         file_attachments: Optional[list] = None,
+        image_base64_list: Optional[list] = None,
         tool_overrides: Optional[list] = None,
         mcp_server_ids_override: Optional[list] = None,
         use_tool_selector_middleware: Optional[bool] = None,
+        invocation_source: Optional[str] = None,
     ) -> AsyncGenerator[Dict, None]:
-        """Execute agent for user message. tool_overrides/mcp_server_ids_override/use_tool_selector_middleware for Telegram."""
+        """Execute agent for user message. tool_overrides/... for Telegram. invocation_source e.g. 'telegram' for tool context."""
         
         # Create cancellation token for this execution
         cancellation_token = asyncio.Event()
@@ -160,15 +162,50 @@ class AgentExecutor:
                 except Exception as reg_err:
                     logger.warning(f"Failed to register custom tools for user {user.id}: {reg_err}")
 
+                # Resolve which tools to use: Telegram request or Telegram conversation overrides UI
                 if tool_overrides is not None:
                     tools_to_use = list(tool_overrides)
                     logger.info(f"Using overridden tools (e.g. Telegram): {tools_to_use}")
-                elif selected_tools is not None:
-                    tools_to_use = list(selected_tools)
-                    logger.info(f"Using UI-selected tools (may be empty): {tools_to_use}")
                 else:
-                    tools_to_use = user.allowed_tools or []
-                    logger.info(f"UI provided no selection; using allowed_tools: {tools_to_use}")
+                    # If this is the Telegram conversation (same chat used by Telegram bot), use Telegram tool settings
+                    conv = db.query(Conversation).filter(
+                        Conversation.id == conversation_id,
+                        Conversation.user_id == user.id,
+                    ).first()
+                    is_telegram_conversation = conv and (conv.title or "").strip() == "Telegram"
+                    if is_telegram_conversation:
+                        prefs = user.preferences or {}
+                        telegram_tools = prefs.get("telegram_tools")
+                        if telegram_tools is not None:
+                            tools_to_use = list(telegram_tools)
+                            logger.info(f"Using Telegram conversation tools (from settings): {tools_to_use}")
+                        else:
+                            tools_to_use = user.allowed_tools or []
+                            logger.info(f"Using Telegram conversation tools (all allowed): {tools_to_use}")
+                    elif selected_tools is not None and len(selected_tools) > 0:
+                        tools_to_use = list(selected_tools)
+                        logger.info(f"Using UI-selected tools: {tools_to_use}")
+                    else:
+                        tools_to_use = user.allowed_tools or []
+                        logger.info(f"Using allowed_tools (no/empty UI selection): {tools_to_use}")
+                
+                # If user has Exchange enabled and configured, add Exchange tools so the agent can use them
+                try:
+                    from backend.tools.implementations.exchange_tools import EXCHANGE_TOOL_NAMES
+                    prefs = user.preferences or {}
+                    exchange = prefs.get("exchange_config", {})
+                    if exchange.get("enabled") and all([
+                        exchange.get("server"),
+                        exchange.get("email"),
+                        exchange.get("username"),
+                        exchange.get("password"),
+                    ]):
+                        for name in EXCHANGE_TOOL_NAMES:
+                            if name not in tools_to_use:
+                                tools_to_use.append(name)
+                        logger.info(f"Exchange enabled: added Exchange tools. tools_to_use now has {len(tools_to_use)} tools")
+                except Exception as ex:
+                    logger.debug(f"Exchange tools check skipped: {ex}")
                 
                 # Retrieve conversation history (previous messages)
                 previous_messages = db.query(Message).filter(
@@ -178,12 +215,13 @@ class AgentExecutor:
                 # Filter out the current message we just added (it will be added again in agent.run)
                 history_messages = [msg for msg in previous_messages if msg.id != user_msg.id]
                 logger.info(f"Retrieved {len(history_messages)} previous messages from conversation {conversation_id}")
-                
+
                 # Track if we've sent the title update
                 title_sent = False
-                
+
                 mcp_ids = mcp_server_ids_override if mcp_server_ids_override is not None else None
-                use_middleware = use_tool_selector_middleware if use_tool_selector_middleware is not None else True
+                # Default False: LLMToolSelectorMiddleware expects a dict from the model; many models (e.g. qwen3) return None or non-dict and cause AssertionError
+                use_middleware = use_tool_selector_middleware if use_tool_selector_middleware is not None else False
                 async for event in agent.run(
                     query=message,
                     conversation_id=conversation_id,
@@ -193,6 +231,8 @@ class AgentExecutor:
                     message_history=history_messages,
                     mcp_server_ids=mcp_ids,
                     use_tool_selector_middleware=use_middleware,
+                    image_base64_list=image_base64_list,
+                    invocation_source=invocation_source,
                 ):
                     # Check for cancellation before processing each event
                     if cancellation_token.is_set():
@@ -507,6 +547,10 @@ Examples:
             
             response = await title_model.ainvoke(messages)
             title = response.content.strip()
+            
+            # Remove <think>...</think> (and redacted_reasoning) tags so titles are clean
+            from backend.agent.agent import strip_reasoning_tags
+            title = strip_reasoning_tags(title).strip()
             
             # Clean up the title (remove quotes, markdown, etc.)
             title = title.strip('"\'`').strip()
