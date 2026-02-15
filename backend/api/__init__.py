@@ -8,14 +8,16 @@ from .settings import router as settings_router
 from .documents import router as documents_router
 from .browser_automation import router as browser_use_router
 from .mcp import router as mcp_router
+from .cron_jobs import router as cron_jobs_router
 
 __all__ = [
     "auth_router",
-    "chat_router", 
+    "chat_router",
     "tools_router",
     "custom_tools_router",
     "settings_router",
     "documents_router",
     "browser_use_router",
-    "mcp_router"
+    "mcp_router",
+    "cron_jobs_router",
 ]
