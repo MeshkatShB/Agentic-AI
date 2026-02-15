@@ -126,7 +126,11 @@ class LangChainToolAdapter:
         return langchain_tool
     
     @staticmethod
-    def convert_tools_for_user(allowed_tool_names: list, user_id: int = None) -> list[LangChainBaseTool]:
+    def convert_tools_for_user(
+        allowed_tool_names: list,
+        user_id: int = None,
+        invocation_source: str = None,
+    ) -> list[LangChainBaseTool]:
         """Convert multiple tools for a user to LangChain tools."""
         langchain_tools = []
         
@@ -134,10 +138,13 @@ class LangChainToolAdapter:
             tool_wrapper = tool_registry.get_tool(tool_name)
             if tool_wrapper:
                 try:
-                    # For search_local_files, inject user_id
-                    if tool_name == "search_local_files" and user_id is not None:
+                    # For tools that need user context, inject user_id (and optional source)
+                    needs_user = tool_name in ("search_local_files", "schedule_job") or (
+                        tool_name.startswith("exchange_") if tool_name else False
+                    )
+                    if needs_user and user_id is not None:
                         langchain_tool = LangChainToolAdapter.convert_tool_with_user(
-                            tool_wrapper.instance, user_id
+                            tool_wrapper.instance, user_id, invocation_source=invocation_source
                         )
                     else:
                         langchain_tool = LangChainToolAdapter.convert_tool(tool_wrapper.instance)
@@ -148,7 +155,11 @@ class LangChainToolAdapter:
         return langchain_tools
     
     @staticmethod
-    def convert_tool_with_user(base_tool_instance: BaseTool, user_id: int) -> LangChainBaseTool:
+    def convert_tool_with_user(
+        base_tool_instance: BaseTool,
+        user_id: int,
+        invocation_source: str = None,
+    ) -> LangChainBaseTool:
         """Convert a BaseTool instance to a LangChain tool with user context."""
         tool_name = base_tool_instance.name
         tool_description = base_tool_instance.description
@@ -217,9 +228,11 @@ class LangChainToolAdapter:
         async def tool_func(**kwargs) -> str:
             """Execute the tool with user context and return result as string."""
             try:
-                # Inject user_id for search_local_files
-                if tool_name == "search_local_files":
+                # Inject user_id (and optional source) for tools that need it
+                if tool_name in ("search_local_files", "schedule_job") or (tool_name and tool_name.startswith("exchange_")):
                     kwargs["user_id"] = user_id
+                if tool_name == "schedule_job" and invocation_source:
+                    kwargs["source"] = invocation_source
                 
                 # Handle renamed json field
                 if "json_data" in kwargs and "json" not in kwargs:
