@@ -19,6 +19,7 @@ import {
   EyeOff,
   Send,
   Copy,
+  Mail,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -43,6 +44,7 @@ const Settings = () => {
     require_confirmation: true,
     reasoning_mode: "simple",
     agent_type: "simple",
+    timezone: "",
   });
   const [pathSettings, setPathSettings] = useState({
     allowed_paths: [],
@@ -101,12 +103,21 @@ const Settings = () => {
     available_tools: [],
     mcp_servers: [],
   });
+  const [exchangeSettings, setExchangeSettings] = useState({
+    enabled: false,
+    server: "",
+    email: "",
+    username: "",
+    password: "",
+  });
+  const [exchangeTesting, setExchangeTesting] = useState(false);
 
   useEffect(() => {
     loadSettings();
     loadApiConfig();
     checkOllamaStatus();
     loadTelegramSettings();
+    loadExchangeSettings();
   }, []);
 
   // Fetch available models when API config changes or when provider is selected
@@ -164,6 +175,52 @@ const Settings = () => {
       setTelegramSettings(response.data);
     } catch (error) {
       console.error("Failed to load Telegram settings:", error);
+    }
+  };
+
+  const loadExchangeSettings = async () => {
+    try {
+      const response = await axios.get("/settings/exchange");
+      setExchangeSettings({
+        enabled: response.data.enabled ?? false,
+        server: response.data.server ?? "",
+        email: response.data.email ?? "",
+        username: response.data.username ?? "",
+        password: response.data.password ?? "",
+      });
+    } catch (error) {
+      console.error("Failed to load Exchange settings:", error);
+    }
+  };
+
+  const saveExchangeSettings = async () => {
+    setIsLoading(true);
+    try {
+      const toSend = { ...exchangeSettings };
+      if (toSend.password?.startsWith("***")) delete toSend.password;
+      await axios.put("/settings/exchange", toSend);
+      toast.success("Exchange settings saved");
+      await loadExchangeSettings();
+    } catch (error) {
+      toast.error("Failed to save Exchange settings");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const testExchangeConnection = async () => {
+    setExchangeTesting(true);
+    try {
+      const response = await axios.post("/settings/exchange/test");
+      if (response.data.status === "success") {
+        toast.success(response.data.message || "Connected successfully");
+      } else {
+        toast.error(response.data.message || "Connection failed");
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Connection test failed");
+    } finally {
+      setExchangeTesting(false);
     }
   };
 
@@ -372,6 +429,7 @@ const Settings = () => {
     { id: "profile", label: "Profile", icon: User },
     { id: "preferences", label: "AI Settings", icon: Sliders },
     { id: "paths", label: "File Access", icon: FolderOpen },
+    { id: "exchange", label: "Exchange", icon: Mail },
     { id: "telegram", label: "Telegram", icon: Send },
     { id: "security", label: "Security", icon: Lock },
     { id: "system", label: "System", icon: Server },
@@ -1480,6 +1538,48 @@ const Settings = () => {
                     </label>
                   </div>
 
+                  {/* Reminder timezone (for cron jobs / reminders) */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Reminder timezone
+                    </label>
+                    <select
+                      value={userSettings.timezone || ""}
+                      onChange={(e) =>
+                        setUserSettings({
+                          ...userSettings,
+                          timezone: e.target.value,
+                        })
+                      }
+                      className="input-glass text-white w-full"
+                    >
+                      <option value="" className="bg-gray-800 text-white">
+                        Server default
+                      </option>
+                      <option value="Asia/Tehran" className="bg-gray-800 text-white">
+                        Asia/Tehran (GMT+3:30)
+                      </option>
+                      <option value="UTC" className="bg-gray-800 text-white">
+                        UTC
+                      </option>
+                      <option value="America/New_York" className="bg-gray-800 text-white">
+                        America/New_York
+                      </option>
+                      <option value="Europe/London" className="bg-gray-800 text-white">
+                        Europe/London
+                      </option>
+                      <option value="Asia/Dubai" className="bg-gray-800 text-white">
+                        Asia/Dubai
+                      </option>
+                      <option value="Asia/Kolkata" className="bg-gray-800 text-white">
+                        Asia/Kolkata
+                      </option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Times for reminders (e.g. &quot;7:33 PM&quot;) use this timezone. Set to Asia/Tehran for Tehran.
+                    </p>
+                  </div>
+
                   <button
                     onClick={saveUserSettings}
                     disabled={isLoading}
@@ -1547,6 +1647,122 @@ const Settings = () => {
                 >
                   {isLoading ? "Saving..." : "Save Path Settings"}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Exchange tab */}
+          {activeTab === "exchange" && (
+            <div className="glass-dark rounded-xl p-6">
+              <h2 className="text-xl font-semibold text-white mb-4">
+                Exchange (EWS) Settings
+              </h2>
+              <p className="text-gray-400 mb-6">
+                Connect your Microsoft Exchange account to use email, calendar, and tasks from the AI assistant. When enabled, the assistant can list/send emails, view/create calendar events, and manage tasks using your configured account.
+              </p>
+
+              <div className="space-y-6">
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="exchange_enabled"
+                    checked={exchangeSettings.enabled}
+                    onChange={(e) =>
+                      setExchangeSettings((prev) => ({
+                        ...prev,
+                        enabled: e.target.checked,
+                      }))
+                    }
+                    className="w-4 h-4 text-primary-500 rounded"
+                  />
+                  <label htmlFor="exchange_enabled" className="text-sm font-medium text-gray-300">
+                    Enable Exchange (use Exchange tools in chat when configured)
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Exchange server
+                  </label>
+                  <input
+                    type="text"
+                    value={exchangeSettings.server}
+                    onChange={(e) =>
+                      setExchangeSettings((prev) => ({ ...prev, server: e.target.value }))
+                    }
+                    className="input-glass text-white w-full"
+                    placeholder="e.g. mail.example.com or exch2016.company.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    value={exchangeSettings.email}
+                    onChange={(e) =>
+                      setExchangeSettings((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    className="input-glass text-white w-full"
+                    placeholder="you@company.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    value={exchangeSettings.username}
+                    onChange={(e) =>
+                      setExchangeSettings((prev) => ({ ...prev, username: e.target.value }))
+                    }
+                    className="input-glass text-white w-full"
+                    placeholder="Domain username (e.g. DOMAIN\\user or user)"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={
+                      exchangeSettings.password?.startsWith("***") ? "" : exchangeSettings.password
+                    }
+                    onChange={(e) =>
+                      setExchangeSettings((prev) => ({ ...prev, password: e.target.value }))
+                    }
+                    className="input-glass text-white w-full"
+                    placeholder={
+                      exchangeSettings.password?.startsWith("***")
+                        ? "Password is set (enter new to change)"
+                        : "Exchange account password"
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={saveExchangeSettings}
+                    disabled={isLoading}
+                    className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isLoading ? "Saving..." : "Save Exchange Settings"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={testExchangeConnection}
+                    disabled={exchangeTesting || !exchangeSettings.enabled}
+                    className="px-4 py-2 rounded-lg bg-gray-800/50 text-gray-300 hover:bg-gray-700/50 border border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {exchangeTesting ? "Testing..." : "Test connection"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1782,8 +1998,8 @@ const Settings = () => {
                           htmlFor="telegram_simple_agent"
                           className="text-sm text-gray-300"
                         >
-                          Use simple agent (recommended if you get
-                          &quot;Expected dict response&quot; or model errors)
+                          Use simple agent (skips pre-step tool selection; if
+                          unchecked and your model errors, we retry without it automatically)
                         </label>
                       </div>
 
