@@ -15,6 +15,7 @@ import BrowserUse from "./pages/BrowserUse";
 import AddTool from "./pages/AddTool";
 import EditTool from "./pages/EditTool";
 import MCPServers from "./pages/MCPServers";
+import CronJobs from "./pages/CronJobs";
 
 // Components
 import PrivateRoute from "./components/PrivateRoute";
@@ -101,6 +102,7 @@ function App() {
             <Route path="/add-tool" element={<AddTool />} />
             <Route path="/edit-tool/:toolId" element={<EditTool />} />
             <Route path="/mcp-servers" element={<MCPServers />} />
+            <Route path="/cron-jobs" element={<CronJobs />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>
