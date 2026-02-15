@@ -360,23 +360,42 @@ const Chat = () => {
               {/* Uploaded files preview */}
               {uploadedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
-                  {uploadedFiles.map((file) => (
-                    <div
-                      key={file.id}
-                      className="flex items-center space-x-2 px-3 py-2 bg-primary-500/20 border border-primary-500/30 rounded-lg"
-                    >
-                      <File className="w-4 h-4 text-primary-400" />
-                      <span className="text-sm text-primary-300 max-w-[200px] truncate">
-                        {file.filename}
-                      </span>
-                      <button
-                        onClick={() => handleRemoveFile(file.id)}
-                        className="p-1 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-all"
+                  {uploadedFiles.map((file) => {
+                    const isImage = file.metadata?.is_image;
+                    const dataUrl =
+                      isImage && file.content
+                        ? `data:image/${
+                            file.metadata?.file_type === "jpeg"
+                              ? "jpeg"
+                              : file.metadata?.file_type || "png"
+                          };base64,${file.content}`
+                        : null;
+                    return (
+                      <div
+                        key={file.id}
+                        className="flex items-center space-x-2 px-3 py-2 bg-primary-500/20 border border-primary-500/30 rounded-lg"
                       >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+                        {dataUrl ? (
+                          <img
+                            src={dataUrl}
+                            alt={file.filename}
+                            className="w-10 h-10 object-cover rounded"
+                          />
+                        ) : (
+                          <File className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                        )}
+                        <span className="text-sm text-primary-300 max-w-[200px] truncate">
+                          {file.filename}
+                        </span>
+                        <button
+                          onClick={() => handleRemoveFile(file.id)}
+                          className="p-1 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-all"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -388,7 +407,7 @@ const Chat = () => {
                   multiple
                   onChange={handleFileUpload}
                   className="hidden"
-                  accept=".pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.htm,.log"
+                  accept=".pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.htm,.log,image/*,.jpg,.jpeg,.png,.gif,.webp"
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -515,9 +534,7 @@ const Chat = () => {
                                   file.filename
                                 )
                               ) {
-                                await loadActiveFiles(
-                                  currentConversation.id
-                                );
+                                await loadActiveFiles(currentConversation.id);
                               }
                             }}
                             className="p-1 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-all flex-shrink-0"
