@@ -34,7 +34,8 @@ class User(Base):
     allowed_tools = Column(JSON, default=lambda: [
         "calculator",
         "search_local_files",
-        "read_file"
+        "read_file",
+        "schedule_job",
     ])
     
     # File access paths (stored as JSON)
