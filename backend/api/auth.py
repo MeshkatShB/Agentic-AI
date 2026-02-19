@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
-from typing import Optional
+from typing import List, Optional
 from datetime import timedelta
 from pydantic import BaseModel, EmailStr
 
@@ -15,6 +15,7 @@ from backend.auth import (
     authenticate_user,
     create_access_token,
     get_current_user,
+    get_current_admin_user,
     get_password_hash
 )
 
@@ -43,6 +44,7 @@ class UserProfile(BaseModel):
     username: str
     email: str
     full_name: Optional[str]
+    is_superuser: bool = False
     preferences: Optional[dict] = {}
     allowed_tools: list = []
     created_at: str
@@ -93,6 +95,7 @@ async def signup(
         username=new_user.username,
         email=new_user.email,
         full_name=new_user.full_name,
+        is_superuser=getattr(new_user, "is_superuser", False),
         preferences=new_user.preferences,
         allowed_tools=new_user.allowed_tools,
         created_at=new_user.created_at.isoformat()
@@ -159,6 +162,7 @@ async def get_profile(
         username=current_user.username,
         email=current_user.email,
         full_name=current_user.full_name,
+        is_superuser=getattr(current_user, "is_superuser", False),
         preferences=current_user.preferences or {},
         allowed_tools=current_user.allowed_tools or [],
         created_at=current_user.created_at.isoformat()
@@ -193,16 +197,22 @@ async def update_profile(
         username=current_user.username,
         email=current_user.email,
         full_name=current_user.full_name,
+        is_superuser=getattr(current_user, "is_superuser", False),
         preferences=current_user.preferences,
         allowed_tools=current_user.allowed_tools,
         created_at=current_user.created_at.isoformat()
     )
 
 
+class ChangePasswordBody(BaseModel):
+    """Change password request body."""
+    old_password: str
+    new_password: str
+
+
 @router.post("/change-password")
 async def change_password(
-    old_password: str,
-    new_password: str,
+    body: ChangePasswordBody,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -210,14 +220,116 @@ async def change_password(
     
     # Verify old password
     from backend.auth import verify_password
-    if not verify_password(old_password, current_user.hashed_password):
+    if not verify_password(body.old_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect password"
         )
     
     # Update password
-    current_user.hashed_password = get_password_hash(new_password)
+    current_user.hashed_password = get_password_hash(body.new_password)
     db.commit()
     
     return {"message": "Password changed successfully"}
+
+
+# --- Admin user management (JWT-protected, admin-only) ---
+
+class UserListItem(BaseModel):
+    """User summary for admin list."""
+    id: int
+    username: str
+    email: str
+    full_name: Optional[str]
+    is_active: bool
+    is_superuser: bool
+    created_at: str
+
+
+class AdminUserCreate(BaseModel):
+    """Admin create user request."""
+    username: str
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+    is_superuser: bool = False
+
+
+@router.get("/users", response_model=List[UserListItem])
+async def list_users(
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """List all users (admin only)."""
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return [
+        UserListItem(
+            id=u.id,
+            username=u.username,
+            email=u.email,
+            full_name=u.full_name,
+            is_active=u.is_active,
+            is_superuser=getattr(u, "is_superuser", False),
+            created_at=u.created_at.isoformat() if u.created_at else ""
+        )
+        for u in users
+    ]
+
+
+@router.post("/users", response_model=UserListItem)
+async def admin_create_user(
+    data: AdminUserCreate,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new user (admin only)."""
+    if db.query(User).filter(User.username == data.username).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+    if db.query(User).filter(User.email == data.email).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    hashed = get_password_hash(data.password)
+    new_user = User(
+        username=data.username,
+        email=data.email,
+        hashed_password=hashed,
+        full_name=data.full_name,
+        is_superuser=data.is_superuser
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return UserListItem(
+        id=new_user.id,
+        username=new_user.username,
+        email=new_user.email,
+        full_name=new_user.full_name,
+        is_active=new_user.is_active,
+        is_superuser=getattr(new_user, "is_superuser", False),
+        created_at=new_user.created_at.isoformat() if new_user.created_at else ""
+    )
+
+
+@router.delete("/users/{user_id}")
+async def admin_delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a user (admin only). Cannot delete self."""
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    db.delete(user)
+    db.commit()
+    return {"message": "User deleted"}

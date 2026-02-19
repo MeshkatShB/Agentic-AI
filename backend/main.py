@@ -105,6 +105,12 @@ try:
 except Exception as e:
     logger.warning(f"Cron job runs table migration check failed (this is OK if table already exists): {e}")
 
+try:
+    from backend.migrations.add_users_is_superuser import migrate as migrate_users_is_superuser
+    migrate_users_is_superuser()
+except Exception as e:
+    logger.warning(f"Users is_superuser migration check failed: {e}")
+
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,

@@ -60,6 +60,7 @@ class User(Base):
             "email": self.email,
             "full_name": self.full_name,
             "is_active": self.is_active,
+            "is_superuser": getattr(self, "is_superuser", False),
             "preferences": self.preferences,
             "allowed_tools": self.allowed_tools,
             "allowed_paths": self.allowed_paths,

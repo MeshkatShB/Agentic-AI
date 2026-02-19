@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   Settings as SettingsIcon,
   User,
+  Users,
   Moon,
   Sun,
   Sliders,
@@ -25,14 +26,23 @@ import axios from "axios";
 import toast from "react-hot-toast";
 import { useAuthStore } from "../stores/authStore";
 import { useThemeStore } from "../stores/themeStore";
+import { useLocation } from "react-router-dom";
+import UsersPage from "./Users";
 
 const Settings = () => {
   const { user, updateProfile, changePassword, refreshUserData } =
     useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
+  const location = useLocation();
 
-  const [activeTab, setActiveTab] = useState("profile");
+  const [activeTab, setActiveTab] = useState(() => {
+    const stateTab = location.state?.tab;
+    if (stateTab === "users" && user?.is_superuser) return "users";
+    if (user?.is_superuser) return "users"; // admins have no separate Profile tab
+    return "profile";
+  });
   const [activeSubTab, setActiveSubTab] = useState("preferences"); // "preferences" or "api-config"
+  const [activeUsersSubTab, setActiveUsersSubTab] = useState("profile"); // "profile" or "management"
   const [systemInfo, setSystemInfo] = useState(null);
   const [userSettings, setUserSettings] = useState({
     theme: "dark",
@@ -111,6 +121,14 @@ const Settings = () => {
     password: "",
   });
   const [exchangeTesting, setExchangeTesting] = useState(false);
+
+  useEffect(() => {
+    if (location.state?.tab === "users" && user?.is_superuser) {
+      setActiveTab("users");
+    } else if (location.state?.tab === "profile" && user?.is_superuser) {
+      setActiveTab("users"); // profile is under Users for admins
+    }
+  }, [location.state?.tab, user?.is_superuser]);
 
   useEffect(() => {
     loadSettings();
@@ -426,7 +444,8 @@ const Settings = () => {
   };
 
   const tabs = [
-    { id: "profile", label: "Profile", icon: User },
+    ...(user?.is_superuser ? [{ id: "users", label: "Users", icon: Users }] : []),
+    ...(!user?.is_superuser ? [{ id: "profile", label: "Profile", icon: User }] : []),
     { id: "preferences", label: "AI Settings", icon: Sliders },
     { id: "paths", label: "File Access", icon: FolderOpen },
     { id: "exchange", label: "Exchange", icon: Mail },
@@ -434,6 +453,58 @@ const Settings = () => {
     { id: "security", label: "Security", icon: Lock },
     { id: "system", label: "System", icon: Server },
   ];
+
+  const profileSectionContent = (
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Username</label>
+        <input
+          type="text"
+          value={user?.username || ""}
+          disabled
+          className="input-glass text-white opacity-50"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Email</label>
+        <input
+          type="email"
+          value={user?.email || ""}
+          disabled
+          className="input-glass text-white opacity-50"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Full Name</label>
+        <input
+          type="text"
+          value={user?.full_name || ""}
+          disabled
+          className="input-glass text-white opacity-50"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-2">Account Created</label>
+        <input
+          type="text"
+          value={
+            user?.created_at
+              ? new Date(user.created_at).toLocaleDateString()
+              : ""
+          }
+          disabled
+          className="input-glass text-white opacity-50"
+        />
+      </div>
+    </div>
+  );
+
+  const profileSection = (
+    <div className="glass-dark rounded-xl p-6">
+      <h2 className="text-xl font-semibold text-white mb-4">Profile</h2>
+      {profileSectionContent}
+    </div>
+  );
 
   return (
     <div className="h-full overflow-y-auto custom-scrollbar">
@@ -456,7 +527,10 @@ const Settings = () => {
                 onClick={() => {
                   setActiveTab(tab.id);
                   if (tab.id === "preferences") {
-                    setActiveSubTab("preferences"); // Reset to first sub-tab when switching to preferences tab
+                    setActiveSubTab("preferences");
+                  }
+                  if (tab.id === "users") {
+                    setActiveUsersSubTab("profile");
                   }
                 }}
                 className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-200 whitespace-nowrap ${
@@ -479,68 +553,8 @@ const Settings = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2 }}
         >
-          {/* Profile tab */}
-          {activeTab === "profile" && (
-            <div className="glass-dark rounded-xl p-6">
-              <h2 className="text-xl font-semibold text-white mb-4">
-                Profile Information
-              </h2>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    value={user?.username || ""}
-                    disabled
-                    className="input-glass text-white opacity-50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={user?.email || ""}
-                    disabled
-                    className="input-glass text-white opacity-50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    value={user?.full_name || ""}
-                    disabled
-                    className="input-glass text-white opacity-50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Account Created
-                  </label>
-                  <input
-                    type="text"
-                    value={
-                      user?.created_at
-                        ? new Date(user.created_at).toLocaleDateString()
-                        : ""
-                    }
-                    disabled
-                    className="input-glass text-white opacity-50"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Profile tab (non-admin only; admin sees Profile under Users) */}
+          {activeTab === "profile" && profileSection}
 
           {/* Preferences tab with sub-tabs */}
           {activeTab === "preferences" && (
@@ -2179,6 +2193,45 @@ const Settings = () => {
                   </div>
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Users tab (admin only): sub-tabs like AI Settings */}
+          {activeTab === "users" && user?.is_superuser && (
+            <div className="glass-dark rounded-xl p-6">
+              <h2 className="text-xl font-semibold text-white mb-4">Users</h2>
+
+              {/* Sub-tabs */}
+              <div className="flex space-x-2 mb-6 border-b border-gray-700/50">
+                <button
+                  onClick={() => setActiveUsersSubTab("profile")}
+                  className={`px-4 py-2 text-sm font-medium transition-all duration-200 border-b-2 ${
+                    activeUsersSubTab === "profile"
+                      ? "border-primary-400 text-primary-400"
+                      : "border-transparent text-gray-400 hover:text-white"
+                  }`}
+                >
+                  Profile
+                </button>
+                <button
+                  onClick={() => setActiveUsersSubTab("management")}
+                  className={`px-4 py-2 text-sm font-medium transition-all duration-200 border-b-2 ${
+                    activeUsersSubTab === "management"
+                      ? "border-primary-400 text-primary-400"
+                      : "border-transparent text-gray-400 hover:text-white"
+                  }`}
+                >
+                  User Management
+                </button>
+              </div>
+
+              {/* Sub-tab content */}
+              {activeUsersSubTab === "profile" && profileSectionContent}
+              {activeUsersSubTab === "management" && (
+                <div className="mt-0">
+                  <UsersPage embedded />
+                </div>
+              )}
             </div>
           )}
         </motion.div>
