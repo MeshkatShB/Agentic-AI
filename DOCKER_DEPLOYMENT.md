@@ -4,8 +4,8 @@ This guide explains how to deploy the Local AI Agent application using Docker.
 
 ## Prerequisites
 
-- Docker Engine 20.10+ or Docker Desktop
-- Docker Compose 2.0+
+- Docker Engine 24.0+ or Docker Desktop
+- Docker Compose 2.20+ (or `docker compose` v2)
 - At least 4GB of available RAM
 - (Optional) NVIDIA Docker runtime for GPU support with Ollama
 
@@ -141,10 +141,7 @@ To use PostgreSQL instead of SQLite:
    DATABASE_URL=postgresql://agent:your_password@postgres:5432/local_agent
    ```
 
-3. Install psycopg2 in backend (add to requirements.txt):
-   ```
-   psycopg2-binary==2.9.9
-   ```
+3. Backend `requirements.txt` already includes `psycopg2-binary` for PostgreSQL support; no change needed.
 
 ### Using Qdrant (Optional)
 
@@ -571,16 +568,23 @@ For production deployment:
    git pull
    ```
 
-2. **Rebuild images**:
+2. **Rebuild images** (required after code or dependency changes):
 
    ```bash
-   docker-compose build
+   docker compose build --no-cache
    ```
+   Or with legacy CLI: `docker-compose build --no-cache`
 
 3. **Restart services**:
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
+   Or: `docker-compose up -d`
+
+**Stack versions (for reference):**
+- Backend: Python 3.11, Uvicorn
+- Frontend: Node 22 (build), Nginx 1.27 (serve)
+- Optional: Ollama 0.3.x, Qdrant v1.12.x, SearxNG
 
 ## Health Checks
 

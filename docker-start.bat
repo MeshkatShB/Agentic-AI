@@ -27,15 +27,20 @@ REM Check service health
 echo 🏥 Checking service health...
 docker-compose ps
 
-REM Pull Ollama model if needed
+REM Pull Ollama model if needed (only when Ollama service is running)
 echo.
 echo 📦 Checking Ollama models...
-docker-compose exec -T ollama ollama list | findstr "qwen3" >nul
-if errorlevel 1 (
-    echo 📥 Pulling qwen3:latest model (this may take a while)...
-    docker-compose exec -T ollama ollama pull qwen3:latest
+docker-compose ps ollama 2>nul | findstr "Up" >nul
+if not errorlevel 1 (
+    docker-compose exec -T ollama ollama list 2>nul | findstr "qwen3" >nul
+    if errorlevel 1 (
+        echo 📥 Pulling qwen3:latest model (this may take a while)...
+        docker-compose exec -T ollama ollama pull qwen3:latest
+    ) else (
+        echo ✅ Qwen3 model already available
+    )
 ) else (
-    echo ✅ Qwen3 model already available
+    echo ℹ️  Ollama not running in Docker. Use host's Ollama or start with: docker-compose --profile ollama-docker up -d
 )
 
 echo.

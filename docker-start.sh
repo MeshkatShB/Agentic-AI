@@ -30,14 +30,18 @@ sleep 10
 echo "🏥 Checking service health..."
 docker-compose ps
 
-# Pull Ollama model if needed
+# Pull Ollama model if needed (only when Ollama service is running)
 echo ""
 echo "📦 Checking Ollama models..."
-if ! docker-compose exec -T ollama ollama list | grep -q "qwen3"; then
-    echo "📥 Pulling qwen3:latest model (this may take a while)..."
-    docker-compose exec -T ollama ollama pull qwen3:latest
+if docker-compose ps ollama 2>/dev/null | grep -q "Up"; then
+    if ! docker-compose exec -T ollama ollama list 2>/dev/null | grep -q "qwen3"; then
+        echo "📥 Pulling qwen3:latest model (this may take a while)..."
+        docker-compose exec -T ollama ollama pull qwen3:latest
+    else
+        echo "✅ Qwen3 model already available"
+    fi
 else
-    echo "✅ Qwen3 model already available"
+    echo "ℹ️  Ollama not running in Docker (using host's Ollama or start with: docker-compose --profile ollama-docker up -d)"
 fi
 
 echo ""

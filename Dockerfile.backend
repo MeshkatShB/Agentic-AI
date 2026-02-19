@@ -1,11 +1,12 @@
 # Backend Dockerfile
+# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies (curl for healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
@@ -14,14 +15,11 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Upgrade pip first (fixes many PyPI JSON issues)
-RUN pip install --upgrade pip setuptools wheel
-
-# Install Python dependencies with retry on failure
-# The JSON decode error is often a transient PyPI issue
-RUN pip install --no-cache-dir --timeout 100 -r requirements.txt || \
+# Upgrade pip and install Python dependencies (use cache mount for faster rebuilds)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel && \
+    pip install --timeout 100 -r requirements.txt || \
     (echo "First attempt failed, clearing cache and retrying..." && \
-     pip cache purge && \
      pip install --no-cache-dir --timeout 100 -r requirements.txt)
 
 # Copy backend code

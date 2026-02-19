@@ -53,39 +53,30 @@ if [[ "$DATABASE_URL" == sqlite* ]] || [ -z "$DATABASE_URL" ]; then
     fi
 fi
 
-# Run migrations
+# Run migrations (order: tables first, then columns)
 echo "🔄 Running migrations..."
 python -c "
 import sys
-try:
-    from backend.migrations.add_file_attachments_column import migrate as migrate_file_attachments
+MIGRATIONS = [
+    ('add_file_attachments_column', 'File attachments'),
+    ('create_mcp_servers_table', 'MCP servers'),
+    ('add_last_tool_count_column', 'Tool count'),
+    ('add_users_is_superuser', 'Users is_superuser'),
+    ('create_cron_jobs_table', 'Cron jobs'),
+    ('create_cron_job_runs_table', 'Cron job runs'),
+    ('add_cron_job_schedule_timezone', 'Cron job timezone'),
+    ('create_user_notifications_table', 'User notifications'),
+    ('create_telegram_pairing_table', 'Telegram pairing'),
+]
+for mod_name, label in MIGRATIONS:
     try:
-        migrate_file_attachments()
-        print('✓ File attachments migration complete')
+        mod = __import__(f'backend.migrations.{mod_name}', fromlist=['migrate'])
+        mod.migrate()
+        print(f'✓ {label} migration complete')
+    except ImportError as e:
+        print(f'Could not import {mod_name}: {e}')
     except Exception as e:
-        print(f'Migration check (file_attachments): {e}')
-except ImportError as e:
-    print(f'Could not import migration: {e}')
-
-try:
-    from backend.migrations.create_mcp_servers_table import migrate as migrate_mcp_servers
-    try:
-        migrate_mcp_servers()
-        print('✓ MCP servers migration complete')
-    except Exception as e:
-        print(f'Migration check (mcp_servers): {e}')
-except ImportError as e:
-    print(f'Could not import migration: {e}')
-
-try:
-    from backend.migrations.add_last_tool_count_column import migrate as migrate_tool_count
-    try:
-        migrate_tool_count()
-        print('✓ Tool count migration complete')
-    except Exception as e:
-        print(f'Migration check (tool_count): {e}')
-except ImportError as e:
-    print(f'Could not import migration: {e}')
+        print(f'Migration check ({mod_name}): {e}')
 " || echo "⚠️  Some migrations may have failed, continuing..."
 
 echo "✅ Backend initialization complete"

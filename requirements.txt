@@ -14,6 +14,7 @@ python-multipart==0.0.20
 # Database
 sqlalchemy==2.0.23
 alembic==1.12.1
+psycopg2-binary==2.9.9  # PostgreSQL (optional; for Docker/production)
 
 # Vector Storage
 chromadb==0.4.18
