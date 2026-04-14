@@ -42,6 +42,10 @@ logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
 logging.getLogger("pypdf._crypt_providers._cryptography").setLevel(logging.ERROR)
 # Suppress passlib/bcrypt version warning
 logging.getLogger("passlib.handlers.bcrypt").setLevel(logging.ERROR)
+# Suppress exchangelib naive-datetime INFO spam (EWS returns datetimes without TZ; library assumes Asia/Tehran)
+logging.getLogger("exchangelib.fields").setLevel(logging.WARNING)
+# Suppress LangSmith 403 when tracing is enabled without a valid API key
+logging.getLogger("langsmith").setLevel(logging.WARNING)
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="cryptography")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pypdf")
