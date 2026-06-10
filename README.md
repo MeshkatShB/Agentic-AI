@@ -2,6 +2,14 @@
 
 Agentic-AI is a local-first AI agent workspace built with FastAPI, React/Vite, SQLAlchemy, Ollama-friendly model support, vector search, built-in tools, custom tools, MCP server integrations, browser automation, scheduled reminders, Telegram access, Exchange/EWS actions, and a Chrome extension for asking questions about the current webpage.
 
+## App Demo
+
+The GIF below is a walkthrough of the full app experience.
+
+<p align="center">
+  <img src="readme/assets/Agentic%20AI%20with%20Text.gif" alt="Agentic-AI full app demo showing multiple screens and workflows" width="900">
+</p>
+
 For the full step-by-step documentation, read [readme/DETAILED_README.md](readme/DETAILED_README.md). The `readme/` directory also contains separate guides for each major capability.
 
 ## Core Capabilities
